@@ -45,7 +45,7 @@ def test_hash_changes_when_an_explicit_non_contract_switch_changes(tmp_path: Pat
     original_hash = load_configuration(copied).deterministic_hash()
     path = copied / "data_quality.yaml"
     parsed = yaml.safe_load(path.read_text(encoding="utf-8"))
-    parsed["injection"]["enabled"] = True
+    parsed["injection"]["enabled"] = False
     path.write_text(yaml.safe_dump(parsed, sort_keys=False), encoding="utf-8")
 
     assert load_configuration(copied).deterministic_hash() != original_hash

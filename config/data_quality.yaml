@@ -1,8 +1,10 @@
 schema_version: 1
 injection:
-  enabled: false
+  enabled: true
   minimum_fraction: 0.001
   maximum_fraction: 0.015
+  master_seed: 20261011
+  test_mode_overrides: {}
 defect_codes:
   - DQ01
   - DQ02
@@ -18,6 +20,21 @@ defect_codes:
   - DQ12
   - DQ13
   - DQ14
+defects:
+  DQ01: {enabled: true, seed_component: 1201, fraction: 0.001, datasets: [order_lines]}
+  DQ02: {enabled: true, seed_component: 1202, fraction: 0.001, datasets: [orders]}
+  DQ03: {enabled: true, seed_component: 1203, fraction: 0.002, datasets: [customer_attribute_history]}
+  DQ04: {enabled: true, seed_component: 1204, fraction: 0.002, datasets: [orders]}
+  DQ05: {enabled: true, seed_component: 1205, fraction: 0.002, datasets: [customer_attribute_history]}
+  DQ06: {enabled: true, seed_component: 1206, fraction: 0.001, datasets: [orders]}
+  DQ07: {enabled: true, seed_component: 1207, fraction: 0.001, datasets: [order_lines]}
+  DQ08: {enabled: true, seed_component: 1208, fraction: 0.001, datasets: [order_lines]}
+  DQ09: {enabled: true, seed_component: 1209, fraction: 0.001, datasets: [product_subcategories, order_lines]}
+  DQ10: {enabled: true, seed_component: 1210, fraction: 0.001, datasets: [orders, order_lines]}
+  DQ11: {enabled: true, seed_component: 1211, fraction: 0.001, datasets: [order_lines]}
+  DQ12: {enabled: true, seed_component: 1212, fraction: 0.001, datasets: [returns]}
+  DQ13: {enabled: true, seed_component: 1213, fraction: 0.001, datasets: [customer_attribute_history, customer_account_assignments, product_supplier_relationships]}
+  DQ14: {enabled: true, seed_component: 1214, fraction: 0.001, datasets: [sales_targets]}
 silver:
   fail_on_high_severity: true
   require_count_conservation: true

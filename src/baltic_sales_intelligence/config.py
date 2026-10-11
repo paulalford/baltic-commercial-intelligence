@@ -33,6 +33,7 @@ Markets = Annotated[tuple[Literal["LT", "LV", "EE"], ...], BeforeValidator(_yaml
 StringTuple = Annotated[tuple[str, ...], BeforeValidator(_yaml_sequence_to_tuple)]
 FloatTuple = Annotated[tuple[float, ...], BeforeValidator(_yaml_sequence_to_tuple)]
 DefectCodeTuple = Annotated[tuple[str, ...], BeforeValidator(_yaml_sequence_to_tuple)]
+NonNegativeInteger = Annotated[int, Field(ge=0)]
 ForecastHorizons = Annotated[tuple[Literal[1, 3, 6], ...], BeforeValidator(_yaml_sequence_to_tuple)]
 ForecastIntervals = Annotated[
     tuple[Literal[0.80, 0.95], ...], BeforeValidator(_yaml_sequence_to_tuple)
@@ -273,6 +274,15 @@ class InjectionSettings(StrictModel):
     enabled: bool
     minimum_fraction: Literal[0.001]
     maximum_fraction: Literal[0.015]
+    master_seed: int = Field(ge=0, le=4_294_967_295)
+    test_mode_overrides: dict[str, NonNegativeInteger]
+
+
+class DefectInjectionSettings(StrictModel):
+    enabled: bool
+    seed_component: int = Field(ge=1)
+    fraction: float = Field(ge=0.001, le=0.015)
+    datasets: StringTuple
 
 
 class SilverSettings(StrictModel):
@@ -285,6 +295,7 @@ class DataQualityConfiguration(StrictModel):
     schema_version: Literal[1]
     injection: InjectionSettings
     defect_codes: DefectCodeTuple
+    defects: dict[str, DefectInjectionSettings]
     silver: SilverSettings
 
     @model_validator(mode="after")
@@ -292,6 +303,36 @@ class DataQualityConfiguration(StrictModel):
         expected = tuple(f"DQ{number:02d}" for number in range(1, 15))
         if self.defect_codes != expected:
             raise ValueError("defect_codes must contain DQ01 through DQ14 in order")
+        if tuple(self.defects) != expected:
+            raise ValueError("defects must configure DQ01 through DQ14 in order")
+        if len({rule.seed_component for rule in self.defects.values()}) != 14:
+            raise ValueError("defect seed components must be unique")
+        expected_datasets = {
+            "DQ01": ("order_lines",),
+            "DQ02": ("orders",),
+            "DQ03": ("customer_attribute_history",),
+            "DQ04": ("orders",),
+            "DQ05": ("customer_attribute_history",),
+            "DQ06": ("orders",),
+            "DQ07": ("order_lines",),
+            "DQ08": ("order_lines",),
+            "DQ09": ("product_subcategories", "order_lines"),
+            "DQ10": ("orders", "order_lines"),
+            "DQ11": ("order_lines",),
+            "DQ12": ("returns",),
+            "DQ13": (
+                "customer_attribute_history",
+                "customer_account_assignments",
+                "product_supplier_relationships",
+            ),
+            "DQ14": ("sales_targets",),
+        }
+        for code, datasets in expected_datasets.items():
+            if self.defects[code].datasets != datasets:
+                raise ValueError(f"{code} datasets must be {datasets}")
+        unknown_overrides = set(self.injection.test_mode_overrides).difference(expected)
+        if unknown_overrides:
+            raise ValueError(f"unknown injection test override(s): {sorted(unknown_overrides)}")
         return self
 
 

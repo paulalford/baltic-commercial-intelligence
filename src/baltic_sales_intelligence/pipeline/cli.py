@@ -12,6 +12,7 @@ from pathlib import Path
 from baltic_sales_intelligence.config import ConfigurationError, load_configuration
 from baltic_sales_intelligence.generation import generate_reference_data
 from baltic_sales_intelligence.logging import configure_logging, log_event
+from baltic_sales_intelligence.quality import publish_raw_injection
 
 
 class ExitCode(IntEnum):
@@ -36,7 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="python -m baltic_sales_intelligence.pipeline",
         description=(
             "Run a versioned Baltic Sales Intelligence pipeline stage. "
-            "The generate stage builds deterministic synthetic reference and transaction truth."
+            "Generate canonical truth or inject deterministic defects into raw copies."
         ),
     )
     parser.add_argument(
@@ -54,17 +55,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Generate and validate without publishing (generate stage only).",
+        help="Run a supported stage without publishing outputs.",
     )
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Replace generation output produced by a different config hash.",
+        help="Replace an existing supported-stage output.",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        help="Generation output directory (default: data/truth below the repository root).",
+        help="Stage output directory (defaults to data/truth or data/raw).",
     )
     return parser
 
@@ -72,10 +73,15 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
-    if (args.dry_run or args.force or args.output) and args.stage != Stage.GENERATE:
+    supported = {Stage.GENERATE, Stage.INJECT_DEFECTS}
+    if (args.dry_run or args.force or args.output) and args.stage not in supported:
         parser = build_parser()
         parser.print_usage()
-        print("error: --dry-run, --force and --output are supported only for generate", flush=True)
+        print(
+            "error: --dry-run, --force and --output are supported only for "
+            "generate and inject-defects",
+            flush=True,
+        )
         return ExitCode.NOT_IMPLEMENTED
 
     try:
@@ -135,6 +141,54 @@ def main(argv: Sequence[str] | None = None) -> int:
             dataset="canonical_truth",
             batch_id=configuration.deterministic_hash()[:12],
             count=sum(item["row_count"] for item in result.manifest["datasets"].values()),
+        )
+        return ExitCode.OK
+    if args.stage == Stage.INJECT_DEFECTS:
+        project_root = Path(args.config).resolve().parent
+        truth = project_root / "data" / "truth"
+        output = args.output or (project_root / "data" / "raw")
+        registry_output = output.parent / "qa" / "injections"
+        manifest_path = output / "raw_injection_manifest.json"
+        if manifest_path.is_file() and not args.force and not args.dry_run:
+            log_event(
+                logger,
+                logging.ERROR,
+                "raw injection output already exists; use --force",
+                stage=args.stage,
+                action="publish",
+                dataset="raw_copies",
+                error_category="OUTPUT_CONFLICT",
+            )
+            return ExitCode.STAGE_FAILED
+        try:
+            result = publish_raw_injection(
+                configuration,
+                truth,
+                output,
+                registry_output,
+                publish=not args.dry_run,
+            )
+        except (OSError, ValueError) as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                str(exc),
+                stage=args.stage,
+                action="injection",
+                dataset="raw_copies",
+                batch_id=configuration.deterministic_hash()[:12],
+                error_category="INJECTION_FAILED",
+            )
+            return ExitCode.STAGE_FAILED
+        log_event(
+            logger,
+            logging.INFO,
+            "raw defects prepared" if args.dry_run else "raw defects published",
+            stage=args.stage,
+            action="dry_run" if args.dry_run else "publish",
+            dataset="raw_copies",
+            batch_id=result.manifest["batch_id"],
+            count=len(result.registry),
         )
         return ExitCode.OK
     log_event(

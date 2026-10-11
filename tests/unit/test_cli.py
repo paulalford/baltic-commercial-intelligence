@@ -1,6 +1,8 @@
 """CLI parsing, configuration and explicit incomplete-stage behaviour."""
 
 from pathlib import Path
+from shutil import copytree
+from types import SimpleNamespace
 
 import pytest
 
@@ -31,6 +33,48 @@ def test_reserved_flags_return_nonzero() -> None:
         ["--config", str(CONFIG_DIRECTORY), "--stage", "validate", "--dry-run"]
     )
     assert result == ExitCode.NOT_IMPLEMENTED
+
+
+def test_inject_defects_dry_run_uses_conventional_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "config"
+    copytree(CONFIG_DIRECTORY, config)
+    observed = {}
+
+    def fake_publish(configuration, truth, output, registry, *, publish):
+        observed.update(
+            truth=truth,
+            output=output,
+            registry=registry,
+            publish=publish,
+            enabled=configuration.data_quality.injection.enabled,
+        )
+        return SimpleNamespace(manifest={"batch_id": "fixture"}, registry=[object()])
+
+    monkeypatch.setattr(
+        "baltic_sales_intelligence.pipeline.cli.publish_raw_injection", fake_publish
+    )
+    output = tmp_path / "custom-raw"
+    result = main(
+        [
+            "--config",
+            str(config),
+            "--stage",
+            "inject-defects",
+            "--dry-run",
+            "--output",
+            str(output),
+        ]
+    )
+    assert result == ExitCode.OK
+    assert observed == {
+        "truth": tmp_path / "data" / "truth",
+        "output": output,
+        "registry": tmp_path / "qa" / "injections",
+        "publish": False,
+        "enabled": True,
+    }
 
 
 def test_missing_config_returns_configuration_error(tmp_path: Path) -> None:
