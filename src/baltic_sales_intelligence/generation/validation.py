@@ -24,6 +24,7 @@ from baltic_sales_intelligence.generation.reference_data import (
     CREDIT_TIERS,
     INDUSTRIES,
     PRIVATE_LABEL_NAMES,
+    PRIVATE_REGISTRY_FIELDS,
     PUBLIC_COLUMNS,
     REGIONS,
     SEGMENTS,
@@ -69,7 +70,10 @@ def validate_reference_data(
     for name, columns in PUBLIC_COLUMNS.items():
         frame = tables[name]
         _require(tuple(frame.columns) == columns, f"{name}: output columns do not match contract")
-        _require(not (set(frame.columns) & PRIVATE_LABEL_NAMES), f"{name}: private label leakage")
+        _require(
+            not (set(frame.columns) & (PRIVATE_LABEL_NAMES | PRIVATE_REGISTRY_FIELDS)),
+            f"{name}: private label leakage",
+        )
     optional_columns = {
         "suppliers": {"supplier_country_code"},
         "customers": {"credit_tier", "preferred_channel_code"},

@@ -217,6 +217,34 @@ PUBLIC_COLUMNS = {
     ),
 }
 
+PRIVATE_REGISTRY_FIELDS = frozenset(
+    {
+        "story_id",
+        "mechanism",
+        "target_entity_private_id",
+        "start_date",
+        "end_date",
+        "target_effect",
+        "baseline_comparator",
+        "generation_seed_component",
+        "validation_tolerance",
+        "observed_effect",
+    }
+)
+
 PRIVATE_LABEL_NAMES = frozenset(
-    {"story_id", "latent_churn_state", "defect_id", "scenario_id", "risk_tier"}
+    {
+        "story_id",
+        "scenario_id",
+        "mechanism",
+        "target_entity_private_id",
+        "target_effect",
+        "baseline_comparator",
+        "generation_seed_component",
+        "validation_tolerance",
+        "observed_effect",
+        "latent_churn_state",
+        "defect_id",
+        "risk_tier",
+    }
 )

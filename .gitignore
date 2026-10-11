@@ -33,6 +33,7 @@ data/gold/*
 data/truth/*
 data/quarantine/*
 data/database/*
+data/qa/*
 
 # Database files
 *.duckdb

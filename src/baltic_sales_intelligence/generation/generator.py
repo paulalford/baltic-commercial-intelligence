@@ -32,6 +32,10 @@ from baltic_sales_intelligence.generation.reference_data import (
     REGIONS,
     SEGMENTS,
 )
+from baltic_sales_intelligence.generation.scenario_controls import (
+    controls_hash,
+    load_scenario_controls,
+)
 from baltic_sales_intelligence.generation.transactions import generate_transaction_tables
 from baltic_sales_intelligence.generation.validation import validate_reference_data
 
@@ -298,6 +302,7 @@ def _generate_customers_and_history(
     history_rng = _rng(configuration, "customer_history")
     count = configuration.generation.population.customers
     distribution = configuration.generation.distributions
+    scenario_controls = {control.story_id: control for control in load_scenario_controls()}
     reporting = configuration.application.reporting
     country_codes = ("LT", "LV", "EE")
     segment_codes = tuple(code for code, _ in SEGMENTS)
@@ -348,6 +353,13 @@ def _generate_customers_and_history(
         year_weights = acquisition_weights.copy()
         if country in {"LV", "EE"}:
             year_weights *= np.linspace(0.82, 1.18, len(year_weights))
+        # S07 changes the genuine LV acquisition hazard; no scenario field is
+        # written to the resulting customer master.
+        if country == "LV":
+            acquisition_control = scenario_controls["S07"]
+            year_weights[acquisition_years >= acquisition_control.start_date.year] *= float(
+                acquisition_control.strength["acquisition_weight_multiplier"]
+            )
         year_weights /= year_weights.sum()
         acquisition_year = int(customer_rng.choice(acquisition_years, p=year_weights))
         acquisition = _random_date(
@@ -773,6 +785,9 @@ def build_manifest(
 ) -> dict[str, Any]:
     """Build the deterministic portion of the generation manifest."""
 
+    effective_config_hash = hashlib.sha256(
+        f"{configuration.deterministic_hash()}:{controls_hash()}".encode()
+    ).hexdigest()
     return {
         "schema_id": "bsi.synthetic_canonical_truth",
         "schema_version": 1,
@@ -780,7 +795,9 @@ def build_manifest(
         "generator_version": __version__,
         "master_seed": configuration.generation.master_seed,
         "component_ids": configuration.generation.component_ids.model_dump(),
-        "config_hash": configuration.deterministic_hash(),
+        # The private controls influence generation, so their content hash is
+        # folded in without publishing their path, labels, or parameters.
+        "config_hash": effective_config_hash,
         "quality_status": "passed",
         "stage_duration_seconds": 0.0,
         "source_paths": [

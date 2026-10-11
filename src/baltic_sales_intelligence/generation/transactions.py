@@ -21,6 +21,14 @@ from baltic_sales_intelligence.generation.financial import (
     sale_postings,
 )
 from baltic_sales_intelligence.generation.reference_data import CITIES, PUBLIC_COLUMNS
+from baltic_sales_intelligence.generation.scenario_controls import (
+    ScenarioControl,
+    active,
+    load_scenario_controls,
+    progress,
+    resolve_targets,
+    scenario_rng,
+)
 
 _PAYMENT_TERMS = ("prepaid", "net_14", "net_30", "net_45")
 _RETURN_REASONS = (
@@ -45,6 +53,62 @@ def _rng(configuration: ProjectConfiguration, component: str) -> np.random.Gener
 
 def _decimal(value: float, quantum: Decimal = UNIT) -> Decimal:
     return Decimal(str(value)).quantize(quantum, rounding=ROUND_HALF_EVEN)
+
+
+def _s01_retained_probability(control: ScenarioControl, event_date: date) -> float:
+    """Return the smooth convex retention probability for the S01 customer."""
+
+    terminal = float(control.strength["terminal_intensity_multiplier"])
+    exponent = float(control.strength["decay_exponent"])
+    return terminal + (1.0 - terminal) * (1.0 - progress(control, event_date)) ** exponent
+
+
+def _index_from_uniform(candidates: np.ndarray, draw: float) -> int:
+    """Select uniformly from candidates using a previously consumed component draw."""
+
+    return int(candidates[min(int(draw * len(candidates)), len(candidates) - 1)])
+
+
+def _apply_s14_demand_weight(
+    weights: np.ndarray,
+    categories: np.ndarray,
+    target: str,
+    control: ScenarioControl,
+    event_date: date,
+) -> None:
+    """Apply S14 only to transactions recognised in its fulfilment window."""
+
+    if active(control, event_date):
+        weights[categories == target] *= float(control.strength["demand_multiplier"])
+
+
+def _apply_s09_pairing(
+    selected_indexes: np.ndarray,
+    eligible_categories: np.ndarray,
+    pair_a: str,
+    pair_b: str,
+    pairing_probability: float,
+    affinity_draw: float,
+    replacement_draw: float,
+) -> None:
+    """Apply S09 pairing using draws already consumed from its component stream."""
+
+    selected_categories = set(eligible_categories[selected_indexes])
+    if (
+        len(selected_indexes) < 2
+        or len({pair_a, pair_b} & selected_categories) != 1
+        or affinity_draw >= pairing_probability
+    ):
+        return
+    missing_category = pair_b if pair_a in selected_categories else pair_a
+    candidates = np.flatnonzero(eligible_categories == missing_category)
+    replaceable = [
+        index
+        for index, selected in enumerate(selected_indexes)
+        if eligible_categories[selected] not in {pair_a, pair_b}
+    ]
+    if len(candidates) and replaceable:
+        selected_indexes[replaceable[-1]] = _index_from_uniform(candidates, replacement_draw)
 
 
 def _random_date(rng: np.random.Generator, start: date, end: date) -> date:
@@ -84,6 +148,12 @@ def generate_orders_and_lines(
     rng = _rng(configuration, "orders")
     settings = configuration.generation.transactions
     reporting = configuration.application.reporting
+    controls = {control.story_id: control for control in load_scenario_controls()}
+    targets = resolve_targets(tuple(controls.values()), tables)
+    story_rngs = {
+        story_id: scenario_rng(configuration.generation.master_seed, control)
+        for story_id, control in controls.items()
+    }
     customers = list(tables["customers"].itertuples(index=False))
     products = list(tables["products"].itertuples(index=False))
     subcategory_category = (
@@ -124,6 +194,15 @@ def generate_orders_and_lines(
             for row in customers
         ]
     )
+    concentration_ids = set(targets["S10"].split("+"))
+    customer_weights *= np.array(
+        [
+            float(controls["S10"].strength["purchase_weight_multiplier"])
+            if row.customer_id in concentration_ids
+            else 1.0
+            for row in customers
+        ]
+    )
     customer_weights /= customer_weights.sum()
 
     order_rows: list[tuple[Any, ...]] = []
@@ -137,6 +216,51 @@ def generate_orders_and_lines(
         order_date = first_date + timedelta(
             days=round(u * (reporting.period_end - first_date).days)
         )
+        # S01 decays ordinary selection probability smoothly.  Rejected target
+        # draws are reassigned through the same customer distribution.
+        churn_control = controls["S01"]
+        if customer.customer_id == targets["S01"] and active(churn_control, order_date):
+            retained_probability = _s01_retained_probability(churn_control, order_date)
+            if story_rngs["S01"].random() > retained_probability:
+                eligible_indexes = np.array(
+                    [
+                        index
+                        for index, candidate in enumerate(customers)
+                        if candidate.customer_id != targets["S01"]
+                        and candidate.acquisition_date <= order_date
+                    ]
+                )
+                eligible_weights = customer_weights[eligible_indexes]
+                eligible_weights /= eligible_weights.sum()
+                customer = customers[
+                    int(story_rngs["S01"].choice(eligible_indexes, p=eligible_weights))
+                ]
+        # S15 reduces the incidence of incumbent LV purchases, not merely the
+        # units on orders that were already selected.  Released demand is
+        # reassigned to genuinely acquired LV customers where exposure exists.
+        health_control = controls["S15"]
+        customer_initial = initial_history.loc[customer.customer_id]
+        if (
+            customer_initial["home_country_code"] == "LV"
+            and customer.acquisition_date < health_control.start_date
+            and active(health_control, order_date)
+            and story_rngs["S15"].random()
+            > float(health_control.strength["incumbent_demand_multiplier"])
+        ):
+            eligible_indexes = np.array(
+                [
+                    index
+                    for index, candidate in enumerate(customers)
+                    if health_control.start_date <= candidate.acquisition_date <= order_date
+                    and initial_history.loc[candidate.customer_id, "home_country_code"] == "LV"
+                ]
+            )
+            if len(eligible_indexes):
+                eligible_weights = customer_weights[eligible_indexes]
+                eligible_weights /= eligible_weights.sum()
+                customer = customers[
+                    int(story_rngs["S15"].choice(eligible_indexes, p=eligible_weights))
+                ]
         status = str(rng.choice(("placed", "fulfilled", "cancelled"), p=settings.status_weights))
         fulfilled_date = None
         cancelled_date = None
@@ -172,6 +296,46 @@ def generate_orders_and_lines(
             pool = same_market if same_market and rng.random() < 0.88 else eligible_people
             credited = pool[int(rng.integers(len(pool)))].salesperson_id
 
+        high_volume_rep = targets["S04"]
+        if (
+            home.home_country_code == "LT"
+            and active(controls["S04"], credit_date)
+            and any(person.salesperson_id == high_volume_rep for person in eligible_people)
+            and story_rngs["S04"].random() < float(controls["S04"].strength["credit_affinity"])
+        ):
+            credited = high_volume_rep
+        high_margin_rep = targets["S05"]
+        portfolio_modulus = int(controls["S05"].strength["portfolio_modulus"])
+        loyal_portfolio = int(customer.customer_id[-5:]) % portfolio_modulus == 0
+        # Remove incidental one-off credit to the target outside its stable
+        # book; ordinary LV peers remain eligible and credit can remain null.
+        if (
+            active(controls["S05"], credit_date)
+            and credited == high_margin_rep
+            and not (home.home_country_code == "LV" and loyal_portfolio)
+        ):
+            replacement_pool = [
+                person
+                for person in eligible_people
+                if person.salesperson_id != high_margin_rep
+                and person.primary_country_code == home.home_country_code
+            ]
+            credited = (
+                replacement_pool[
+                    int(story_rngs["S05"].integers(len(replacement_pool)))
+                ].salesperson_id
+                if replacement_pool
+                else None
+            )
+        if (
+            home.home_country_code == "LV"
+            and loyal_portfolio
+            and active(controls["S05"], credit_date)
+            and any(person.salesperson_id == high_margin_rep for person in eligible_people)
+            and story_rngs["S05"].random() < float(controls["S05"].strength["portfolio_affinity"])
+        ):
+            credited = high_margin_rep
+
         count = int(rng.choice(np.arange(1, 7), p=settings.line_count_weights))
         event_date = fulfilled_date or order_date
         eligible_products = [
@@ -183,12 +347,63 @@ def generate_orders_and_lines(
         ]
         if len(eligible_products) < count:
             raise ValueError(f"insufficient eligible products for order {order_index}")
-        selected_indexes = rng.choice(len(eligible_products), size=count, replace=False)
+        eligible_categories = np.array(
+            [subcategory_category[product.subcategory_id] for product in eligible_products],
+            dtype=object,
+        )
+        selection_weights = np.ones(len(eligible_products), dtype=float)
+        if active(controls["S06"], order_date):
+            selection_weights[eligible_categories == targets["S06"]] *= float(
+                controls["S06"].strength["demand_multiplier"]
+            )
+        if active(controls["S08"], order_date) and order_date.month in set(
+            controls["S08"].strength["peak_months"]
+        ):
+            selection_weights[eligible_categories == targets["S08"]] *= float(
+                controls["S08"].strength["demand_multiplier"]
+            )
+        if active(controls["S11"], order_date):
+            selection_weights[eligible_categories == targets["S11"]] *= float(
+                controls["S11"].strength["demand_multiplier"]
+            )
+        if active(controls["S13"], order_date):
+            selection_weights[eligible_categories == targets["S13"]] *= float(
+                controls["S13"].strength["demand_multiplier"]
+            )
+        s14_active = active(controls["S14"], event_date)
+        _apply_s14_demand_weight(
+            selection_weights,
+            eligible_categories,
+            targets["S14"],
+            controls["S14"],
+            event_date,
+        )
+        selection_weights /= selection_weights.sum()
+        selection_rng = story_rngs["S14"] if s14_active else rng
+        selected_indexes = np.asarray(
+            selection_rng.choice(
+                len(eligible_products), size=count, replace=False, p=selection_weights
+            )
+        )
+        pair_a, pair_b = targets["S09"].split("+")
+        s09_affinity_draw = story_rngs["S09"].random()
+        s09_replacement_draw = story_rngs["S09"].random()
+        if active(controls["S09"], order_date):
+            _apply_s09_pairing(
+                selected_indexes,
+                eligible_categories,
+                pair_a,
+                pair_b,
+                float(controls["S09"].strength["pairing_probability"]),
+                s09_affinity_draw,
+                s09_replacement_draw,
+            )
         order_line_values: list[Decimal] = []
         order_quantities: list[int] = []
         for local_line, selected_index in enumerate(selected_indexes, 1):
             product = eligible_products[int(selected_index)]
-            category_number = int(subcategory_category[product.subcategory_id][-2:])
+            category_id = subcategory_category[product.subcategory_id]
+            category_number = int(category_id[-2:])
             years = max(0.0, (order_date - date(2022, 1, 1)).days / 365.25)
             category_drift = 0.004 * ((category_number % 5) - 2)
             list_price = quantize_unit(
@@ -208,11 +423,59 @@ def generate_orders_and_lines(
             if channel == "ACCOUNT_MANAGER":
                 discount_base += 0.025
             discount = max(0.0, min(0.32, discount_base + float(rng.normal(0, 0.025))))
+
+            if home.home_country_code == "EE" and active(controls["S02"], order_date):
+                unit_cost = quantize_unit(
+                    unit_cost * _decimal(float(controls["S02"].strength["cost_multiplier"]))
+                )
+                discount += float(controls["S02"].strength["discount_addition"])
+            if ship_city == targets["S03"] and active(controls["S03"], order_date):
+                discount += float(controls["S03"].strength["discount_addition"])
+            if credited == targets["S04"] and active(controls["S04"], order_date):
+                discount += float(controls["S04"].strength["discount_addition"])
+            if credited == targets["S05"] and active(controls["S05"], order_date):
+                discount += float(controls["S05"].strength["discount_addition"])
+            if home.segment_code == targets["S12"] and active(controls["S12"], order_date):
+                discount += float(controls["S12"].strength["discount_addition"])
+                unit_cost = quantize_unit(
+                    unit_cost * _decimal(float(controls["S12"].strength["cost_multiplier"]))
+                )
+            if category_id == targets["S11"] and active(controls["S11"], order_date):
+                list_price = quantize_unit(
+                    list_price * _decimal(float(controls["S11"].strength["list_price_multiplier"]))
+                )
+            if category_id == targets["S13"] and active(controls["S13"], order_date):
+                list_price = quantize_unit(
+                    list_price * _decimal(float(controls["S13"].strength["list_price_multiplier"]))
+                )
+                unit_cost = quantize_unit(
+                    unit_cost * _decimal(float(controls["S13"].strength["cost_multiplier"]))
+                )
+            if home.home_country_code == "LV" and active(controls["S15"], order_date):
+                unit_cost = quantize_unit(
+                    unit_cost * _decimal(float(controls["S15"].strength["cost_multiplier"]))
+                )
+                discount += float(controls["S15"].strength["discount_addition"])
+            discount = max(0.0, min(0.45, discount))
             discount_rate = _decimal(discount, RATE)
             realised = quantize_unit(list_price * (Decimal("1") - discount_rate))
             quantity = int(rng.choice(np.arange(1, 9), p=settings.quantity_weights))
             if home.company_size_band == "large" and rng.random() < 0.25:
                 quantity += int(rng.integers(4, 18))
+            quantity_multiplier = 1.0
+            if home.home_country_code == "EE" and active(controls["S02"], order_date):
+                quantity_multiplier *= float(controls["S02"].strength["demand_multiplier"])
+            if credited == targets["S04"] and active(controls["S04"], order_date):
+                quantity_multiplier *= float(controls["S04"].strength["quantity_multiplier"])
+            if credited == targets["S05"] and active(controls["S05"], order_date):
+                quantity_multiplier *= float(controls["S05"].strength["quantity_multiplier"])
+            if home.segment_code == targets["S12"] and active(controls["S12"], order_date):
+                quantity_multiplier *= float(controls["S12"].strength["demand_multiplier"])
+            if home.home_country_code == "LV" and active(controls["S15"], order_date):
+                is_new = customer.acquisition_date >= controls["S15"].start_date
+                key = "new_customer_demand_multiplier" if is_new else "incumbent_demand_multiplier"
+                quantity_multiplier *= float(controls["S15"].strength[key])
+            quantity = max(1, round(quantity * quantity_multiplier))
             vat_rate = (
                 Decimal("0.000000")
                 if rng.random() < settings.zero_vat_share
@@ -286,12 +549,15 @@ def generate_returns(
     configuration: ProjectConfiguration,
     orders: pd.DataFrame,
     lines: pd.DataFrame,
+    products: pd.DataFrame | None = None,
+    subcategories: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Generate lifecycle events with cumulative accepted quantities capped at sold units."""
 
     rng = _rng(configuration, "returns")
     settings = configuration.generation.transactions
     reporting = configuration.application.reporting
+    controls = {control.story_id: control for control in load_scenario_controls()}
     fulfilled = orders[orders["order_status"] == "fulfilled"].set_index("order_id")
     eligible = lines[lines["order_id"].isin(fulfilled.index)].reset_index(drop=True)
     target = (
@@ -305,15 +571,44 @@ def generate_returns(
     category_bias = np.array(
         [1.0 + (int(value[-4:]) % 7) * 0.08 for value in eligible["product_id"]]
     )
+    if products is not None and subcategories is not None:
+        product_category = (
+            products[["product_id", "subcategory_id"]]
+            .merge(
+                subcategories[["subcategory_id", "category_id"]],
+                on="subcategory_id",
+                validate="many_to_one",
+            )
+            .set_index("product_id")["category_id"]
+        )
+        fulfilled_dates = eligible["order_id"].map(fulfilled["fulfilled_date"])
+        return_control = controls["S06"]
+        category_bias *= np.array(
+            [
+                float(return_control.strength["return_weight_multiplier"])
+                if product_category[product_id] == return_control.target["id"]
+                and active(return_control, fulfilled_date)
+                else 1.0
+                for product_id, fulfilled_date in zip(
+                    eligible["product_id"], fulfilled_dates, strict=True
+                )
+            ]
+        )
     category_bias /= category_bias.sum()
     accepted_so_far: dict[str, int] = {}
     rows: list[tuple[Any, ...]] = []
     for number in range(1, target + 1):
-        line = eligible.iloc[int(rng.choice(len(eligible), p=category_bias))]
+        if number == target:
+            fulfilment_dates = eligible["order_id"].map(fulfilled["fulfilled_date"])
+            line = eligible.loc[fulfilment_dates.idxmax()]
+        else:
+            line = eligible.iloc[int(rng.choice(len(eligible), p=category_bias))]
         sold = int(line["quantity_ordered"])
         status = str(
             rng.choice(("requested", "accepted", "rejected"), p=settings.return_status_weights)
         )
+        if number == target and status == "requested":
+            status = "rejected"
         remaining = sold - accepted_so_far.get(line["order_line_id"], 0)
         if status == "accepted" and remaining <= 0:
             status = "rejected"
@@ -328,6 +623,11 @@ def generate_returns(
         request_date = min(
             fulfilment + timedelta(days=int(rng.integers(1, 76))), reporting.extension_end
         )
+        if number == target:
+            request_date = max(
+                request_date,
+                reporting.default_as_of_date + timedelta(days=1),
+            )
         decision_date = (
             None
             if status == "requested"
@@ -470,6 +770,12 @@ def generate_transaction_tables(
     return {
         "orders": orders,
         "order_lines": lines,
-        "returns": generate_returns(configuration, orders, lines),
+        "returns": generate_returns(
+            configuration,
+            orders,
+            lines,
+            tables["products"],
+            tables["product_subcategories"],
+        ),
         "sales_targets": generate_targets(configuration, tables["salespeople"]),
     }

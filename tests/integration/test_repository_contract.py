@@ -20,12 +20,11 @@ ROOT = Path(__file__).parents[2]
         "data/silver/generated.parquet",
         "data/database/warehouse.duckdb",
         "data/gold/generated.parquet",
+        "data/qa/scenarios/private_truth_registry.csv",
     ],
 )
 def test_generated_content_and_local_environment_are_git_ignored(path: str) -> None:
-    result = subprocess.run(
-        ["git", "check-ignore", "--quiet", path], cwd=ROOT, check=False
-    )
+    result = subprocess.run(["git", "check-ignore", "--quiet", path], cwd=ROOT, check=False)
     assert result.returncode == 0, f"expected Git to ignore {path}"
 
 
@@ -41,7 +40,5 @@ def test_generated_content_and_local_environment_are_git_ignored(path: str) -> N
     ],
 )
 def test_data_directory_markers_are_not_git_ignored(path: str) -> None:
-    result = subprocess.run(
-        ["git", "check-ignore", "--quiet", path], cwd=ROOT, check=False
-    )
+    result = subprocess.run(["git", "check-ignore", "--quiet", path], cwd=ROOT, check=False)
     assert result.returncode == 1, f"expected Git to retain {path}"

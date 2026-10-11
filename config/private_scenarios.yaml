@@ -1,0 +1,157 @@
+# Restricted generator controls for SPEC-06 validation only.
+#
+# This repository is a demonstrative local project.  Keeping this file and the
+# generated QA artifacts away from public business tables is a leakage-
+# prevention convention, not a formal filesystem security boundary.
+schema_version: 1
+scenarios:
+  - story_id: S01
+    mechanism: time-varying purchase-intensity decay
+    target: {kind: large_customer, country: LT}
+    start_date: 2025-01-01
+    end_date: 2026-09-30
+    strength: {terminal_intensity_multiplier: 0.00, decay_exponent: 1.20}
+    baseline_comparator: other large LT customers
+    exposure_requirements: {baseline_orders: 8, exposed_orders: 3, observation_days: 365}
+    validation_thresholds: {maximum_normalised_post_pre_ratio: 0.50}
+    seed_component: 1101
+  - story_id: S02
+    mechanism: market growth with discount and cost pressure
+    target: {kind: country, id: EE}
+    start_date: 2025-01-01
+    end_date: 2026-09-30
+    strength: {demand_multiplier: 1.22, cost_multiplier: 1.16, discount_addition: 0.025}
+    baseline_comparator: EE before intervention and LT/LV contemporaneous
+    exposure_requirements: {baseline_lines: 100, exposed_lines: 100}
+    validation_thresholds: {minimum_revenue_growth: 0.05, maximum_margin_change: -0.025}
+    seed_component: 1102
+  - story_id: S03
+    mechanism: territory-specific excess discounting
+    target: {kind: ship_city, id: LT-KAUNAS}
+    start_date: 2025-01-01
+    end_date: 2026-09-30
+    strength: {discount_addition: 0.075}
+    baseline_comparator: other LT destinations with comparable product mix
+    exposure_requirements: {baseline_lines: 80, exposed_lines: 80}
+    validation_thresholds: {minimum_mix_adjusted_discount_gap: 0.045}
+    seed_component: 1103
+  - story_id: S04
+    mechanism: high-volume low-margin salesperson portfolio
+    target: {kind: salesperson, country: LT, ordinal: 0}
+    start_date: 2024-01-01
+    end_date: 2026-09-30
+    strength: {quantity_multiplier: 1.55, discount_addition: 0.080, credit_affinity: 0.34}
+    baseline_comparator: other employed salespeople
+    exposure_requirements: {baseline_lines: 500, exposed_lines: 500}
+    validation_thresholds: {minimum_revenue_percentile: 0.60, maximum_margin_gap: -0.040}
+    seed_component: 1104
+  - story_id: S05
+    mechanism: low-volume loyal high-margin salesperson portfolio
+    target: {kind: salesperson, country: LV, ordinal: 0}
+    start_date: 2024-01-01
+    end_date: 2026-09-30
+    strength: {quantity_multiplier: 0.72, discount_addition: -0.050, portfolio_affinity: 0.94, portfolio_modulus: 12}
+    baseline_comparator: other LV salespeople
+    exposure_requirements: {baseline_customers: 50, exposed_customers: 50, repeat_observation_days: 180}
+    validation_thresholds: {minimum_margin_gap: 0.035, minimum_repeat_rate_gap: 0.080}
+    seed_component: 1105
+  - story_id: S06
+    mechanism: category demand growth with higher accepted-return propensity
+    target: {kind: category, id: CAT-07}
+    start_date: 2025-01-01
+    end_date: 2026-06-30
+    strength: {demand_multiplier: 1.45, return_weight_multiplier: 3.00}
+    baseline_comparator: same category in mature pre-intervention cohorts
+    exposure_requirements: {baseline_sold_units: 1000, exposed_sold_units: 1000, maturity_days: 90}
+    validation_thresholds: {minimum_unit_growth: 0.10, minimum_return_rate_gap: 0.015}
+    seed_component: 1106
+  - story_id: S07
+    mechanism: increased genuine customer acquisition hazard
+    target: {kind: country, id: LV}
+    start_date: 2025-01-01
+    end_date: 2026-09-30
+    strength: {acquisition_weight_multiplier: 2.40, early_purchase_multiplier: 1.40}
+    baseline_comparator: LV annualised pre-intervention acquisition
+    exposure_requirements: {baseline_customers: 30, exposed_customers: 30, first_purchase_days: 180}
+    validation_thresholds: {minimum_acquisition_growth: 0.20}
+    seed_component: 1107
+  - story_id: S08
+    mechanism: category-specific recurring seasonal demand
+    target: {kind: category, id: CAT-12}
+    start_date: 2022-01-01
+    end_date: 2026-09-30
+    strength: {peak_months: [5, 6, 11], demand_multiplier: 2.00}
+    baseline_comparator: same category outside peak months and other categories
+    exposure_requirements: {baseline_lines: 100, exposed_lines: 60, minimum_years: 2}
+    validation_thresholds: {minimum_seasonal_ratio: 1.35}
+    seed_component: 1108
+  - story_id: S09
+    mechanism: conditional category-pair basket affinity
+    target: {kind: category_pair, ids: [CAT-04, CAT-05]}
+    start_date: 2023-01-01
+    end_date: 2026-09-30
+    strength: {pairing_probability: 0.72}
+    baseline_comparator: marginal category popularity across eligible baskets
+    exposure_requirements: {baseline_orders: 100, exposed_orders: 30, minimum_pair_orders: 20}
+    validation_thresholds: {minimum_lift: 1.35}
+    seed_component: 1109
+  - story_id: S10
+    mechanism: market customer-purchase concentration
+    target: {kind: country_top_customers, country: EE, count: 5}
+    start_date: 2023-01-01
+    end_date: 2026-09-30
+    strength: {purchase_weight_multiplier: 15.00}
+    baseline_comparator: customer concentration in LT and LV
+    exposure_requirements: {baseline_customers: 25, exposed_customers: 25}
+    validation_thresholds: {minimum_top5_share: 0.30}
+    seed_component: 1110
+  - story_id: S11
+    mechanism: category price increase with demand elasticity
+    target: {kind: category, id: CAT-03}
+    start_date: 2025-01-01
+    end_date: 2026-09-30
+    strength: {list_price_multiplier: 1.14, demand_multiplier: 0.72}
+    baseline_comparator: same products before intervention
+    exposure_requirements: {baseline_lines: 100, exposed_lines: 100}
+    validation_thresholds: {minimum_price_growth: 0.08, minimum_unit_gp_growth: 0.04, maximum_unit_growth: -0.08}
+    seed_component: 1111
+  - story_id: S12
+    mechanism: segment lifetime gross-profit advantage
+    target: {kind: segment, id: PUBLIC_SECTOR}
+    start_date: 2022-01-01
+    end_date: 2026-09-30
+    strength: {discount_addition: -0.040, cost_multiplier: 0.93, demand_multiplier: 1.10}
+    baseline_comparator: tenure-matched non-public-sector customers
+    exposure_requirements: {baseline_customers: 30, exposed_customers: 20, observation_days: 365}
+    validation_thresholds: {minimum_tenure_adjusted_gp_ratio: 1.18}
+    seed_component: 1112
+  - story_id: S13
+    mechanism: category cost inflation above selling-price growth
+    target: {kind: category, id: CAT-06}
+    start_date: 2025-01-01
+    end_date: 2026-09-30
+    strength: {cost_multiplier: 1.18, list_price_multiplier: 1.035, demand_multiplier: 1.12}
+    baseline_comparator: same products before intervention
+    exposure_requirements: {baseline_lines: 100, exposed_lines: 100}
+    validation_thresholds: {minimum_revenue_growth: 0.00, maximum_margin_change: -0.040}
+    seed_component: 1113
+  - story_id: S14
+    mechanism: temporary category demand-intensity spike
+    target: {kind: category, id: CAT-10}
+    start_date: 2025-04-01
+    end_date: 2025-06-30
+    strength: {demand_multiplier: 3.90}
+    baseline_comparator: category seasonal baseline outside declared interval
+    exposure_requirements: {baseline_months: 24, exposed_months: 3}
+    validation_thresholds: {minimum_robust_zscore: 3.0, maximum_false_positives: 2}
+    seed_component: 1114
+  - story_id: S15
+    mechanism: acquisition-led growth masking incumbent margin and retention weakness
+    target: {kind: country, id: LV}
+    start_date: 2025-01-01
+    end_date: 2026-09-30
+    strength: {new_customer_demand_multiplier: 2.50, incumbent_demand_multiplier: 0.78, cost_multiplier: 1.12, discount_addition: 0.020}
+    baseline_comparator: LV pre-intervention incumbent cohorts
+    exposure_requirements: {baseline_customers: 50, exposed_customers: 50}
+    validation_thresholds: {minimum_revenue_growth: 0.04, maximum_margin_change: -0.020, maximum_incumbent_activity_change: -0.08}
+    seed_component: 1115
