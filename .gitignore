@@ -1,0 +1,65 @@
+# Python environments
+.venv/
+venv/
+env/
+
+# Python caches and build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Testing and linting
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Generated datasets
+data/raw/*
+data/silver/*
+data/gold/*
+data/truth/*
+data/quarantine/*
+data/database/*
+
+# Database files
+*.duckdb
+*.duckdb.wal
+*.duckdb.tmp
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+.ipynb_checkpoints/
+.streamlit/secrets.toml
+
+# Editor and operating system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Preserve intended data directories
+!data/raw/.gitkeep
+!data/silver/.gitkeep
+!data/gold/.gitkeep
+!data/truth/.gitkeep
+!data/quarantine/.gitkeep
+!data/database/.gitkeep
