@@ -1,0 +1,24 @@
+schema_version: 1
+injection:
+  enabled: false
+  minimum_fraction: 0.001
+  maximum_fraction: 0.015
+defect_codes:
+  - DQ01
+  - DQ02
+  - DQ03
+  - DQ04
+  - DQ05
+  - DQ06
+  - DQ07
+  - DQ08
+  - DQ09
+  - DQ10
+  - DQ11
+  - DQ12
+  - DQ13
+  - DQ14
+silver:
+  fail_on_high_severity: true
+  require_count_conservation: true
+  publish_atomically: true

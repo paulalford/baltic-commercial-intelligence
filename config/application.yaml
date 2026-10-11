@@ -1,0 +1,18 @@
+schema_version: 1
+project:
+  name: Baltic Sales Intelligence
+  business_name: Baltic Trade Supplies UAB
+  fictional: true
+  reporting_currency: EUR
+  markets:
+    - LT
+    - LV
+    - EE
+reporting:
+  period_start: 2022-01-01
+  period_end: 2026-09-30
+  extension_end: 2026-12-31
+  default_as_of_date: 2026-09-30
+logging:
+  level: INFO
+  format: json

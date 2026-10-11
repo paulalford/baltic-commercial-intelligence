@@ -17,6 +17,7 @@ dist/
 .coverage
 .coverage.*
 htmlcov/
+coverage.xml
 
 # Environment variables and secrets
 .env
@@ -47,6 +48,7 @@ data/database/*
 *.log
 *.tmp
 *.bak
+.python-version
 .ipynb_checkpoints/
 .streamlit/secrets.toml
 

@@ -1,0 +1,53 @@
+schema_version: 1
+master_seed: 20261010
+population:
+  customers: 4000
+  products: 750
+  salespeople: 30
+  suppliers: 80
+  subcategories_per_category: 4
+  orders_target: 120000
+  orders_tolerance_fraction: 0.05
+  order_lines_min: 250000
+  order_lines_max: 400000
+  return_events_min: 8000
+  return_events_max: 15000
+catalogue:
+  categories:
+    - Safety Equipment
+    - Hand Tools
+    - Power Tool Accessories
+    - Electrical
+    - Fasteners
+    - Maintenance Supplies
+    - Workwear
+    - Cleaning & Hygiene
+    - Storage & Handling
+    - Workshop Equipment
+    - Industrial Consumables
+    - Outdoor & Site Equipment
+  channels:
+    - Account Manager
+    - Inside Sales
+    - Web
+    - Email / Phone Order
+    - Trade Counter
+  alternative_supplier_share: 0.20
+  alternative_supplier_tolerance: 0.03
+component_ids:
+  geography: 1
+  customers: 2
+  products: 3
+  salespeople: 4
+  assignments: 5
+  customer_history: 6
+  orders: 7
+  returns: 8
+  targets: 9
+  defects: 10
+  stories: 11
+output:
+  encoding: UTF-8
+  line_ending: LF
+  date_format: YYYY-MM-DD
+  stable_row_order: true
