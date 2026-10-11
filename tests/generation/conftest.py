@@ -15,7 +15,17 @@ def small_configuration() -> ProjectConfiguration:
     baseline = load_configuration(CONFIG_DIRECTORY)
     payload = baseline.model_dump()
     payload["generation"]["population"].update(
-        {"customers": 120, "products": 72, "salespeople": 12, "suppliers": 16}
+        {
+            "customers": 120,
+            "products": 72,
+            "salespeople": 12,
+            "suppliers": 16,
+            "orders_target": 500,
+            "order_lines_min": 500,
+            "order_lines_max": 3000,
+            "return_events_min": 30,
+            "return_events_max": 60,
+        }
     )
     return ProjectConfiguration.model_validate(payload)
 

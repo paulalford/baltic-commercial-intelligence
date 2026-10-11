@@ -72,6 +72,21 @@ distributions:
   history_change_share: 0.22
   assignment_gap_share: 0.06
   ownership_transfer_share: 0.12
+transactions:
+  # placed, fulfilled, cancelled
+  status_weights: [0.03, 0.91, 0.06]
+  # one through six lines; larger baskets remain possible through the six-line tail
+  line_count_weights: [0.20, 0.25, 0.23, 0.16, 0.10, 0.06]
+  # quantities one through eight; account-size scaling creates the commercial long tail
+  quantity_weights: [0.30, 0.23, 0.16, 0.11, 0.08, 0.05, 0.04, 0.03]
+  # requested, accepted, rejected
+  return_status_weights: [0.12, 0.72, 0.16]
+  restockable_share: 0.78
+  zero_vat_share: 0.06
+  uncredited_share: 0.14
+  cross_border_share: 0.08
+  target_annual_growth: 0.045
+  unallocated_target_share: 0.08
 component_ids:
   geography: 1
   customers: 2

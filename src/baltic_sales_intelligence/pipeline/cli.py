@@ -1,4 +1,4 @@
-"""Pipeline CLI with an implemented deterministic reference-generation stage."""
+"""Pipeline CLI with deterministic canonical truth generation."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="python -m baltic_sales_intelligence.pipeline",
         description=(
             "Run a versioned Baltic Sales Intelligence pipeline stage. "
-            "Milestone 2 implements deterministic synthetic reference generation."
+            "The generate stage builds deterministic synthetic reference and transaction truth."
         ),
     )
     parser.add_argument(
@@ -129,10 +129,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         log_event(
             logger,
             logging.INFO,
-            "reference truth validated" if args.dry_run else "reference truth published",
+            "canonical truth validated" if args.dry_run else "canonical truth published",
             stage=args.stage,
             action="dry_run" if args.dry_run else "publish",
-            dataset="reference_truth",
+            dataset="canonical_truth",
             batch_id=configuration.deterministic_hash()[:12],
             count=sum(item["row_count"] for item in result.manifest["datasets"].values()),
         )

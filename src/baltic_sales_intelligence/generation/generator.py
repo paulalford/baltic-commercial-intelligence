@@ -32,6 +32,7 @@ from baltic_sales_intelligence.generation.reference_data import (
     REGIONS,
     SEGMENTS,
 )
+from baltic_sales_intelligence.generation.transactions import generate_transaction_tables
 from baltic_sales_intelligence.generation.validation import validate_reference_data
 
 _CUSTOMER_ADJECTIVES = (
@@ -703,7 +704,7 @@ def _generate_date_dimension(configuration: ProjectConfiguration) -> pd.DataFram
 
 
 def generate_reference_tables(configuration: ProjectConfiguration) -> dict[str, pd.DataFrame]:
-    """Generate all Milestone 2 public tables without writing to disk."""
+    """Generate all canonical public truth tables without writing to disk."""
 
     tables = _reference_tables(configuration)
     tables["suppliers"] = _generate_suppliers(configuration)
@@ -719,17 +720,25 @@ def generate_reference_tables(configuration: ProjectConfiguration) -> dict[str, 
         configuration, tables["products"], tables["suppliers"]
     )
     tables["date_dimension"] = _generate_date_dimension(configuration)
+    tables.update(generate_transaction_tables(configuration, tables))
     ordered = {name: tables[name].reset_index(drop=True) for name in PUBLIC_COLUMNS}
     validate_reference_data(ordered, configuration)
     return ordered
 
 
-def _canonical_value(value: Any) -> str:
+def _canonical_value(value: Any, column: str | None = None) -> str:
     if value is None or pd.isna(value):
         return ""
     if isinstance(value, date):
         return value.isoformat()
     if isinstance(value, Decimal):
+        if column in {"discount_rate", "vat_rate_fraction"}:
+            return f"{value:.6f}"
+        if column and (
+            column.startswith("posted_")
+            or column in {"outbound_freight_eur", "returns_freight_eur", "target_value"}
+        ):
+            return f"{value:.2f}"
         return f"{value:.4f}"
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -742,7 +751,15 @@ def canonical_content_hash(frame: pd.DataFrame) -> str:
     digest = hashlib.sha256()
     digest.update(("\x1f".join(frame.columns) + "\n").encode())
     for row in frame.itertuples(index=False, name=None):
-        digest.update(("\x1f".join(_canonical_value(value) for value in row) + "\n").encode())
+        digest.update(
+            (
+                "\x1f".join(
+                    _canonical_value(value, column)
+                    for column, value in zip(frame.columns, row, strict=True)
+                )
+                + "\n"
+            ).encode()
+        )
     return digest.hexdigest()
 
 
@@ -757,7 +774,7 @@ def build_manifest(
     """Build the deterministic portion of the generation manifest."""
 
     return {
-        "schema_id": "bsi.synthetic_reference_truth",
+        "schema_id": "bsi.synthetic_canonical_truth",
         "schema_version": 1,
         "stage": "generate",
         "generator_version": __version__,
@@ -870,7 +887,12 @@ def build_distribution_summary(
 
 
 def _write_csv(frame: pd.DataFrame, path: Path) -> None:
-    serialised = frame.map(_canonical_value)
+    serialised = pd.DataFrame(
+        {
+            column: frame[column].map(lambda value, name=column: _canonical_value(value, name))
+            for column in frame.columns
+        }
+    )
     serialised.to_csv(path, index=False, encoding="utf-8", lineterminator="\n")
 
 
@@ -880,14 +902,32 @@ def _write_parquet(frame: pd.DataFrame, path: Path) -> None:
         for column in frame.columns
         if column.endswith("_date") or column in {"valid_from", "valid_to", "full_date"}
     }
-    decimal_columns = {"reference_list_unit_price_eur", "reference_standard_unit_cost_eur"}
+    unit_decimal_columns = {
+        "reference_list_unit_price_eur",
+        "reference_standard_unit_cost_eur",
+        "list_unit_price_eur",
+        "realised_unit_price_eur",
+        "unit_cost_eur",
+        "refund_unit_ex_vat_eur",
+    }
+    rate_decimal_columns = {"discount_rate", "vat_rate_fraction"}
+    money_decimal_columns = {
+        column
+        for column in frame.columns
+        if column.startswith("posted_")
+        or column in {"outbound_freight_eur", "returns_freight_eur", "target_value"}
+    }
     arrays = []
     for column in frame.columns:
         arrow_type = None
         if column in date_columns:
             arrow_type = pa.date32()
-        elif column in decimal_columns:
+        elif column in unit_decimal_columns:
             arrow_type = pa.decimal128(18, 4)
+        elif column in rate_decimal_columns:
+            arrow_type = pa.decimal128(9, 6)
+        elif column in money_decimal_columns:
+            arrow_type = pa.decimal128(18, 2)
         values = [None if pd.isna(value) else value for value in frame[column].tolist()]
         arrays.append(pa.array(values, type=arrow_type))
     table = pa.Table.from_arrays(arrays, names=list(frame.columns))

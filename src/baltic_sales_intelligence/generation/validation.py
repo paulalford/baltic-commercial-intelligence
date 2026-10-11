@@ -9,6 +9,12 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from baltic_sales_intelligence.generation.financial import (
+    ZERO,
+    allocate_freight,
+    return_postings,
+    sale_postings,
+)
 from baltic_sales_intelligence.generation.reference_data import (
     ACCOUNT_STATUSES,
     CHANNELS,
@@ -72,6 +78,19 @@ def validate_reference_data(
         "customer_account_assignments": {"valid_to"},
         "products": {"discontinued_date"},
         "product_supplier_relationships": {"valid_to"},
+        "orders": {
+            "fulfilled_date",
+            "cancelled_date",
+            "credited_salesperson_id",
+            "payment_terms_code",
+        },
+        "returns": {
+            "return_decision_date",
+            "accepted_quantity",
+            "restocking_outcome_code",
+            "refund_unit_ex_vat_eur",
+        },
+        "sales_targets": {"salesperson_id"},
     }
     for name, columns in PUBLIC_COLUMNS.items():
         required = set(columns).difference(optional_columns.get(name, set()))
@@ -115,6 +134,10 @@ def validate_reference_data(
         "products": "product_id",
         "product_supplier_relationships": "product_supplier_relationship_id",
         "date_dimension": "date_key",
+        "orders": "order_id",
+        "order_lines": "order_line_id",
+        "returns": "return_id",
+        "sales_targets": "target_id",
     }
     for name, key in primary_keys.items():
         _require(tables[name][key].notna().all(), f"{name}: null primary key")
@@ -388,3 +411,271 @@ def validate_reference_data(
         and dates.iloc[-1]["full_date"] == reporting.extension_end,
         "date_dimension: wrong boundaries",
     )
+
+    orders = tables["orders"]
+    lines = tables["order_lines"]
+    returns = tables["returns"]
+    targets = tables["sales_targets"]
+    population = configuration.generation.population
+    tolerance = population.orders_target * population.orders_tolerance_fraction
+    _require(
+        abs(len(orders) - population.orders_target) <= tolerance, "orders: count outside range"
+    )
+    _require(
+        population.order_lines_min <= len(lines) <= population.order_lines_max,
+        "order_lines: count outside configured range",
+    )
+    _require(
+        population.return_events_min <= len(returns) <= population.return_events_max,
+        "returns: count outside configured range",
+    )
+    _require(
+        set(orders["customer_id"]).issubset(set(customers["customer_id"])),
+        "orders: invalid customer FK",
+    )
+    _require(
+        set(orders["channel_code"]).issubset(set(tables["sales_channels"]["channel_code"])),
+        "orders: invalid channel FK",
+    )
+    _require(
+        set(orders["ship_to_city_id"]).issubset(set(tables["cities"]["city_id"])),
+        "orders: invalid ship-to city FK",
+    )
+    _require(
+        set(orders["credited_salesperson_id"].dropna()).issubset(salesperson_ids),
+        "orders: invalid salesperson FK",
+    )
+    order_lookup = orders.set_index("order_id")
+    for order in orders.itertuples(index=False):
+        _require(
+            order.order_date >= customer_acquisition[order.customer_id],
+            f"orders: pre-acquisition order {order.order_id}",
+        )
+        if order.order_status == "fulfilled":
+            _require(
+                not _missing(order.fulfilled_date)
+                and _missing(order.cancelled_date)
+                and order.fulfilled_date >= order.order_date,
+                f"orders: invalid fulfilled dates {order.order_id}",
+            )
+            credit_date = order.fulfilled_date
+        elif order.order_status == "cancelled":
+            _require(
+                not _missing(order.cancelled_date)
+                and _missing(order.fulfilled_date)
+                and order.cancelled_date >= order.order_date,
+                f"orders: invalid cancelled dates {order.order_id}",
+            )
+            credit_date = order.order_date
+        else:
+            _require(
+                order.order_status == "placed"
+                and _missing(order.fulfilled_date)
+                and _missing(order.cancelled_date),
+                f"orders: invalid placed dates {order.order_id}",
+            )
+            credit_date = order.order_date
+        _require(
+            order.outbound_freight_eur >= ZERO
+            and (order.order_status == "fulfilled" or order.outbound_freight_eur == ZERO),
+            f"orders: invalid outbound freight {order.order_id}",
+        )
+        if not _missing(order.credited_salesperson_id):
+            person = people.loc[order.credited_salesperson_id]
+            _require(
+                person["hire_date"] <= credit_date
+                and (
+                    _missing(person["termination_date"]) or credit_date < person["termination_date"]
+                ),
+                f"orders: credit outside employment {order.order_id}",
+            )
+
+    _require(
+        set(lines["order_id"]).issubset(set(orders["order_id"])), "order_lines: invalid order FK"
+    )
+    _require(
+        set(lines["product_id"]).issubset(set(products["product_id"])),
+        "order_lines: invalid product FK",
+    )
+    _require(
+        not lines.duplicated(["order_id", "line_number"]).any(),
+        "order_lines: duplicate order line number",
+    )
+    _require((lines["quantity_ordered"] > 0).all(), "order_lines: nonpositive quantity")
+    product_lookup = products.set_index("product_id")
+    for line in lines.itertuples(index=False):
+        order = order_lookup.loc[line.order_id]
+        product = product_lookup.loc[line.product_id]
+        event_date = (
+            order["fulfilled_date"] if order["order_status"] == "fulfilled" else order["order_date"]
+        )
+        _require(
+            product["launch_date"] <= order["order_date"]
+            and product["launch_date"] <= event_date
+            and (
+                _missing(product["discontinued_date"]) or event_date < product["discontinued_date"]
+            ),
+            f"order_lines: ineligible product {line.order_line_id}",
+        )
+        _require(
+            Decimal("0") <= line.discount_rate <= Decimal("1")
+            and line.discount_rate.as_tuple().exponent == -6,
+            f"order_lines: invalid discount {line.order_line_id}",
+        )
+        _require(
+            line.realised_unit_price_eur
+            == (line.list_unit_price_eur * (Decimal("1") - line.discount_rate)).quantize(
+                Decimal("0.0001"), rounding="ROUND_HALF_EVEN"
+            ),
+            f"order_lines: realised price mismatch {line.order_line_id}",
+        )
+        expected = sale_postings(
+            line.quantity_ordered,
+            line.list_unit_price_eur,
+            line.discount_rate,
+            line.unit_cost_eur,
+            line.vat_rate_fraction,
+            fulfilled=order["order_status"] == "fulfilled",
+        )
+        actual = (
+            line.posted_list_value_eur,
+            line.posted_discount_eur,
+            line.posted_net_sales_eur,
+            line.posted_cogs_eur,
+            line.posted_taxable_base_eur,
+            line.posted_vat_amount_eur,
+            line.posted_invoice_total_eur,
+        )
+        _require(actual == expected, f"order_lines: posting mismatch {line.order_line_id}")
+        _require(
+            (line.vat_treatment_code, line.vat_rate_fraction)
+            in {("sim_standard", Decimal("0.200000")), ("sim_zero", Decimal("0.000000"))},
+            f"order_lines: invalid VAT treatment {line.order_line_id}",
+        )
+
+    for order_id, order_lines in lines.groupby("order_id", sort=False):
+        order = order_lookup.loc[order_id]
+        allocations = allocate_freight(
+            order["outbound_freight_eur"],
+            list(order_lines["posted_net_sales_eur"]),
+            list(order_lines["quantity_ordered"]),
+        )
+        _require(
+            sum(allocations, ZERO) == order["outbound_freight_eur"],
+            f"orders: freight allocation mismatch {order_id}",
+        )
+
+    line_lookup = lines.set_index("order_line_id")
+    _require(
+        set(returns["order_line_id"]).issubset(set(lines["order_line_id"])),
+        "returns: invalid order-line FK",
+    )
+    accepted_totals: dict[str, int] = {}
+    for event in returns.sort_values(["return_requested_date", "return_id"]).itertuples(
+        index=False
+    ):
+        line = line_lookup.loc[event.order_line_id]
+        order = order_lookup.loc[line["order_id"]]
+        _require(
+            order["order_status"] == "fulfilled"
+            and event.return_requested_date >= order["fulfilled_date"],
+            f"returns: ineligible line/date {event.return_id}",
+        )
+        if event.return_status == "accepted":
+            _require(
+                not _missing(event.return_decision_date)
+                and event.return_decision_date >= event.return_requested_date
+                and event.accepted_quantity > 0
+                and event.accepted_quantity <= event.requested_quantity
+                and event.restocking_outcome_code in {"restockable", "written_off"},
+                f"returns: invalid accepted event {event.return_id}",
+            )
+            accepted_totals[event.order_line_id] = (
+                accepted_totals.get(event.order_line_id, 0) + event.accepted_quantity
+            )
+            _require(
+                accepted_totals[event.order_line_id] <= line["quantity_ordered"],
+                f"returns: cumulative accepted cap exceeded {event.order_line_id}",
+            )
+        elif event.return_status == "rejected":
+            _require(
+                not _missing(event.return_decision_date) and _missing(event.accepted_quantity),
+                f"returns: invalid rejected event {event.return_id}",
+            )
+        else:
+            _require(
+                event.return_status == "requested"
+                and _missing(event.return_decision_date)
+                and _missing(event.accepted_quantity),
+                f"returns: invalid requested event {event.return_id}",
+            )
+        expected = return_postings(
+            None if _missing(event.accepted_quantity) else event.accepted_quantity,
+            None if _missing(event.refund_unit_ex_vat_eur) else event.refund_unit_ex_vat_eur,
+            line["realised_unit_price_eur"],
+            line["unit_cost_eur"],
+            line["vat_rate_fraction"],
+            None if _missing(event.restocking_outcome_code) else event.restocking_outcome_code,
+            accepted=event.return_status == "accepted",
+        )
+        _require(
+            (
+                event.posted_refund_ex_vat_eur,
+                event.posted_recovered_cogs_eur,
+                event.posted_vat_reversal_eur,
+            )
+            == expected,
+            f"returns: posting mismatch {event.return_id}",
+        )
+        _require(
+            event.returns_freight_eur >= ZERO
+            and (event.return_status == "accepted" or event.returns_freight_eur == ZERO),
+            f"returns: invalid freight {event.return_id}",
+        )
+
+    _require(
+        set(targets["metric_code"]) == {"net_revenue_eur", "gross_profit_eur"},
+        "sales_targets: metric mismatch",
+    )
+    _require(
+        set(targets["allocation_type"]) == {"salesperson", "unallocated_country"},
+        "sales_targets: allocation mismatch",
+    )
+    _require((targets["target_value"] >= ZERO).all(), "sales_targets: negative target")
+    _require(
+        targets["target_month"].map(lambda value: value.day == 1).all(),
+        "sales_targets: target month is not month-start",
+    )
+    salesperson_targets = targets[targets["allocation_type"] == "salesperson"]
+    unallocated_targets = targets[targets["allocation_type"] == "unallocated_country"]
+    _require(
+        salesperson_targets["salesperson_id"].notna().all()
+        and unallocated_targets["salesperson_id"].isna().all(),
+        "sales_targets: invalid allocation key",
+    )
+    _require(
+        not salesperson_targets.duplicated(["target_month", "metric_code", "salesperson_id"]).any()
+        and not unallocated_targets.duplicated(
+            ["target_month", "metric_code", "country_code"]
+        ).any(),
+        "sales_targets: duplicate leaf grain",
+    )
+    for target in salesperson_targets.itertuples(index=False):
+        person = people.loc[target.salesperson_id]
+        next_month = date(
+            target.target_month.year + (target.target_month.month == 12),
+            target.target_month.month % 12 + 1,
+            1,
+        )
+        _require(
+            person["hire_date"] < next_month
+            and (
+                _missing(person["termination_date"])
+                or person["termination_date"] > target.target_month
+            ),
+            f"sales_targets: ineligible salesperson {target.target_id}",
+        )
+        _require(
+            target.country_code == person["primary_country_code"],
+            f"sales_targets: country snapshot mismatch {target.target_id}",
+        )

@@ -90,12 +90,48 @@ class PopulationSettings(StrictModel):
     salespeople: int = Field(ge=3)
     suppliers: int = Field(ge=3)
     subcategories_per_category: int = Field(ge=1)
-    orders_target: Literal[120000]
-    orders_tolerance_fraction: Literal[0.05]
-    order_lines_min: Literal[250000]
-    order_lines_max: Literal[400000]
-    return_events_min: Literal[8000]
-    return_events_max: Literal[15000]
+    orders_target: int = Field(ge=1)
+    orders_tolerance_fraction: float = Field(ge=0, le=0.25)
+    order_lines_min: int = Field(ge=1)
+    order_lines_max: int = Field(ge=1)
+    return_events_min: int = Field(ge=0)
+    return_events_max: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_transaction_ranges(self) -> PopulationSettings:
+        if self.order_lines_min > self.order_lines_max:
+            raise ValueError("order_lines_min cannot exceed order_lines_max")
+        if self.return_events_min > self.return_events_max:
+            raise ValueError("return_events_min cannot exceed return_events_max")
+        return self
+
+
+class TransactionSettings(StrictModel):
+    status_weights: FloatTuple
+    line_count_weights: FloatTuple
+    quantity_weights: FloatTuple
+    return_status_weights: FloatTuple
+    restockable_share: float = Field(ge=0, le=1)
+    zero_vat_share: float = Field(ge=0, le=1)
+    uncredited_share: float = Field(ge=0, le=1)
+    cross_border_share: float = Field(ge=0, le=1)
+    target_annual_growth: float = Field(ge=-0.25, le=0.50)
+    unallocated_target_share: float = Field(ge=0, le=0.50)
+
+    @model_validator(mode="after")
+    def validate_transaction_weights(self) -> TransactionSettings:
+        expected = {
+            "status_weights": 3,
+            "line_count_weights": 6,
+            "quantity_weights": 8,
+            "return_status_weights": 3,
+        }
+        for name, length in expected.items():
+            values = getattr(self, name)
+            if len(values) != length:
+                raise ValueError(f"{name} must contain {length} values")
+            _validate_weights(values, name)
+        return self
 
 
 class CatalogueSettings(StrictModel):
@@ -221,6 +257,7 @@ class GenerationConfiguration(StrictModel):
     population: PopulationSettings
     catalogue: CatalogueSettings
     distributions: DistributionSettings
+    transactions: TransactionSettings
     component_ids: ComponentIdentifiers
     output: OutputSettings
 
