@@ -32,8 +32,46 @@ catalogue:
     - Web
     - Email / Phone Order
     - Trade Counter
+  subcategories:
+    Safety Equipment: [Head Protection, Eye Protection, Hearing Protection, Fall Protection]
+    Hand Tools: [Cutting Tools, Measuring Tools, Striking Tools, Pliers & Wrenches]
+    Power Tool Accessories: [Drill Bits, Cutting Discs, Saw Blades, Sanding Accessories]
+    Electrical: [Cables & Leads, Connectors, Lighting, Test Equipment]
+    Fasteners: [Bolts & Nuts, Screws, Anchors, Washers]
+    Maintenance Supplies: [Lubricants, Adhesives, Sealants, Maintenance Chemicals]
+    Workwear: [Jackets, Trousers, Footwear, Gloves]
+    Cleaning & Hygiene: [Cleaning Chemicals, Wipes & Cloths, Paper Products, Dispensers]
+    Storage & Handling: [Storage Bins, Shelving, Trolleys, Material Handling]
+    Workshop Equipment: [Workbenches, Tool Storage, Lifting Equipment, Workshop Lighting]
+    Industrial Consumables: [Abrasives, Welding Consumables, Tapes, Packaging]
+    Outdoor & Site Equipment: [Site Lighting, Barriers & Signs, Tarpaulins, Outdoor Tools]
+  category_weights: [0.11, 0.09, 0.08, 0.09, 0.10, 0.09, 0.10, 0.08, 0.07, 0.06, 0.08, 0.05]
   alternative_supplier_share: 0.20
   alternative_supplier_tolerance: 0.03
+distributions:
+  country_weights: [0.55, 0.27, 0.18]
+  city_weights:
+    LT-VILNIUS: 0.42
+    LT-KAUNAS: 0.26
+    LT-KLAIPEDA: 0.15
+    LT-SIAULIAI: 0.09
+    LT-PANEVEZYS: 0.08
+    LV-RIGA: 0.58
+    LV-DAUGAVPILS: 0.13
+    LV-LIEPAJA: 0.12
+    LV-JELGAVA: 0.10
+    LV-VENTSPILS: 0.07
+    EE-TALLINN: 0.58
+    EE-TARTU: 0.20
+    EE-NARVA: 0.12
+    EE-PARNU: 0.10
+  segment_weights: [0.40, 0.28, 0.12, 0.08, 0.12]
+  industry_weights: [0.16, 0.14, 0.10, 0.08, 0.09, 0.09, 0.08, 0.07, 0.08, 0.06, 0.05]
+  company_size_weights: [0.28, 0.38, 0.24, 0.10]
+  account_status_weights: [0.90, 0.06, 0.04]
+  history_change_share: 0.22
+  assignment_gap_share: 0.06
+  ownership_transfer_share: 0.12
 component_ids:
   geography: 1
   customers: 2

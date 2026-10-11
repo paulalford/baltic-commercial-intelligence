@@ -16,9 +16,14 @@ def test_parser_rejects_unknown_stage() -> None:
     assert exc_info.value.code == ExitCode.USAGE_ERROR
 
 
-def test_unimplemented_stage_returns_explicit_nonzero_exit() -> None:
-    result = main(["--config", str(CONFIG_DIRECTORY), "--stage", "generate"])
-    assert result == ExitCode.NOT_IMPLEMENTED
+def test_generate_dry_run_returns_success_without_writing(tmp_path: Path) -> None:
+    output = tmp_path / "truth"
+    result = main([
+        "--config", str(CONFIG_DIRECTORY), "--stage", "generate", "--dry-run",
+        "--output", str(output),
+    ])
+    assert result == ExitCode.OK
+    assert not output.exists()
 
 
 def test_reserved_flags_return_nonzero() -> None:

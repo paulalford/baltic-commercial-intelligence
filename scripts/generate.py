@@ -1,4 +1,4 @@
-"""Thin wrapper for the future generation stage."""
+"""Thin wrapper for deterministic reference generation."""
 
 import sys
 

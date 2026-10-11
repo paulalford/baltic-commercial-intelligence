@@ -1,14 +1,16 @@
-"""Foundation CLI with explicit failure for every unimplemented stage."""
+"""Pipeline CLI with an implemented deterministic reference-generation stage."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 from collections.abc import Sequence
 from enum import IntEnum, StrEnum
 from pathlib import Path
 
 from baltic_sales_intelligence.config import ConfigurationError, load_configuration
+from baltic_sales_intelligence.generation import generate_reference_data
 from baltic_sales_intelligence.logging import configure_logging, log_event
 
 
@@ -33,8 +35,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m baltic_sales_intelligence.pipeline",
         description=(
-            "Validate foundation configuration and select a future pipeline stage. "
-            "Milestone 1 does not implement business-processing stages."
+            "Run a versioned Baltic Sales Intelligence pipeline stage. "
+            "Milestone 2 implements deterministic synthetic reference generation."
         ),
     )
     parser.add_argument(
@@ -52,12 +54,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Reserved for a later milestone; currently returns a nonzero error.",
+        help="Generate and validate without publishing (generate stage only).",
     )
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Reserved for a later milestone; currently returns a nonzero error.",
+        help="Replace generation output produced by a different config hash.",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="Generation output directory (default: data/truth below the repository root).",
     )
     return parser
 
@@ -65,10 +72,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
-    if args.dry_run or args.force:
+    if (args.dry_run or args.force or args.output) and args.stage != Stage.GENERATE:
         parser = build_parser()
         parser.print_usage()
-        print("error: --dry-run and --force are reserved and not implemented", flush=True)
+        print("error: --dry-run, --force and --output are supported only for generate", flush=True)
         return ExitCode.NOT_IMPLEMENTED
 
     try:
@@ -86,6 +93,50 @@ def main(argv: Sequence[str] | None = None) -> int:
         return ExitCode.CONFIGURATION_ERROR
 
     logger = configure_logging(configuration.application.logging.level)
+    if args.stage == Stage.GENERATE:
+        output = args.output or (Path(args.config).resolve().parent / "data" / "truth")
+        manifest_path = output / "generation_manifest.json"
+        if manifest_path.is_file() and not args.force and not args.dry_run:
+            try:
+                existing = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                existing = {}
+            if existing.get("config_hash") != configuration.deterministic_hash():
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    "existing generated truth has a different config hash; use --force",
+                    stage=args.stage,
+                    action="publish",
+                    dataset="reference_truth",
+                    error_category="OUTPUT_CONFLICT",
+                )
+                return ExitCode.STAGE_FAILED
+        try:
+            result = generate_reference_data(configuration, output, publish=not args.dry_run)
+        except (OSError, ValueError) as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                str(exc),
+                stage=args.stage,
+                action="generation",
+                dataset="reference_truth",
+                batch_id=configuration.deterministic_hash()[:12],
+                error_category="GENERATION_FAILED",
+            )
+            return ExitCode.STAGE_FAILED
+        log_event(
+            logger,
+            logging.INFO,
+            "reference truth validated" if args.dry_run else "reference truth published",
+            stage=args.stage,
+            action="dry_run" if args.dry_run else "publish",
+            dataset="reference_truth",
+            batch_id=configuration.deterministic_hash()[:12],
+            count=sum(item["row_count"] for item in result.manifest["datasets"].values()),
+        )
+        return ExitCode.OK
     log_event(
         logger,
         logging.ERROR,

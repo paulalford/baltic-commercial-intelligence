@@ -6,9 +6,11 @@ All future customers, employees, suppliers, transactions and commercial results 
 
 ## Current status
 
-**Milestone 1 — Repository Foundation.** The installable Python package, versioned configuration, structured logging, CLI contracts, test foundation and minimal Streamlit landing page are present. Synthetic generation, defect injection, data validation, financial calculations, DuckDB transformations, analytics, insights and operational dashboards are intentionally **not implemented**.
-
-Every pipeline stage currently exits nonzero with `NOT_IMPLEMENTED`. A completed command must not be inferred from the presence of its package or directory.
+**Milestone 2 — Synthetic Reference Data.** The project generates and validates the
+SPEC-03/SPEC-05 reference population: geography, controlled taxonomies, customers and
+SCD Type 2 history, salespeople and account ownership, products and effective-dated
+supplier relationships, and the extended date dimension. Commercial orders, order lines,
+returns and sales targets remain intentionally unimplemented for Milestone 3.
 
 ## Technology foundation
 
@@ -33,14 +35,16 @@ docs/                        Approved specifications, decisions and audits
 scripts/                     Thin wrappers for six future pipeline stages
 sql/                         Empty staging/dimension/fact/mart/analysis/test layers
 src/baltic_sales_intelligence/
-  pipeline/                  CLI parser and explicit stage-dispatch contract
-  generation/ ... insights/ Reserved domain packages
+  generation/                Deterministic reference generators and validators
+  pipeline/                  CLI parser and stage dispatch
+  quality/ ... insights/     Reserved later-stage domain packages
   config.py                  Strict typed configuration loader and hash
   logging.py                 Structured JSON logging
 tests/
   unit/                      Imports, config, logging and CLI behaviour
   integration/               Git exclusions and Streamlit placeholder
-  generation/ analytics/     Reserved for later milestone tests
+  generation/                Reference generation and integrity tests
+  analytics/                 Reserved for later milestone tests
 ```
 
 ## Linux Mint / Python 3.12 setup
@@ -84,7 +88,9 @@ configuration = load_configuration("config")
 print(configuration.deterministic_hash())
 ```
 
-Unknown keys, duplicate YAML keys, missing files and values outside the approved foundation contract fail explicitly. Successful configuration validation does **not** prove future generated data complies with SPEC-03/04.
+Unknown keys, duplicate YAML keys, missing files and invalid weights or taxonomies fail
+explicitly. Population counts and the master seed may be deliberately changed while the
+approved market and taxonomy contract remains fixed.
 
 ## Pipeline CLI
 
@@ -92,6 +98,11 @@ Unknown keys, duplicate YAML keys, missing files and values outside the approved
 python -m baltic_sales_intelligence.pipeline --help
 python -m baltic_sales_intelligence.pipeline --config config/ --stage generate
 ```
+
+The generation command writes canonical UTF-8 CSV and typed Parquet files to
+`data/truth/`, plus `generation_manifest.json` and `distribution_summary.csv`. Use
+`--dry-run` to generate and validate without publishing, `--output PATH` for an alternate
+truth directory, and `--force` when replacing a build made from a different config hash.
 
 Valid stage names are `generate`, `inject-defects`, `validate`, `warehouse`, `analytics` and `insights`.
 
@@ -103,7 +114,8 @@ Valid stage names are `generate`, `inject-defects`, `validate`, `warehouse`, `an
 | 4 | Requested feature/stage is explicitly not implemented |
 | 5 | Reserved for a future implemented-stage failure |
 
-`--dry-run` and `--force` are reserved and currently return exit code 4. Thin wrappers under `scripts/` use the same dispatcher and failure contract.
+The other five stages still return exit code 4. Thin wrappers under `scripts/` use the same
+dispatcher and failure contract.
 
 ## Logging
 
@@ -136,11 +148,12 @@ versioned config → synthetic truth → defect-injected raw → validation/quar
 
 ## Explicit limitations
 
-- No synthetic business records or reference datasets have been generated.
+- Reference truth is synthetic and generated locally; generated files remain Git-ignored.
+- No orders, order lines, returns or sales targets are generated in this milestone.
 - No financial formula, VAT posting, return recognition or target calculation is implemented.
 - No defect injection, silver validation, DuckDB schema, SQL mart or analytical model exists.
 - No forecasting, anomaly, opportunity or management finding is produced.
-- Foundation tests do not satisfy SPEC-16 generator, financial, analytical or release gates.
+- Milestone 2 tests cover generator contracts, not later financial or analytical gates.
 - The lock snapshot records one resolved environment; independent clean-install verification must be reported separately.
 
-Implementation must stop at this milestone until external review approves continuation.
+The implementation intentionally stops at the Milestone 2 reference-data boundary.

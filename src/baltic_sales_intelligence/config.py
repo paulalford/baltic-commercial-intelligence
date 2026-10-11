@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 import yaml
-from pydantic import BaseModel, BeforeValidator, ConfigDict, ValidationError, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, model_validator
 from yaml.constructor import ConstructorError
 
 
@@ -29,14 +29,11 @@ def _yaml_sequence_to_tuple(value: object) -> object:
     return tuple(value) if isinstance(value, list) else value
 
 
-Markets = Annotated[
-    tuple[Literal["LT", "LV", "EE"], ...], BeforeValidator(_yaml_sequence_to_tuple)
-]
+Markets = Annotated[tuple[Literal["LT", "LV", "EE"], ...], BeforeValidator(_yaml_sequence_to_tuple)]
 StringTuple = Annotated[tuple[str, ...], BeforeValidator(_yaml_sequence_to_tuple)]
+FloatTuple = Annotated[tuple[float, ...], BeforeValidator(_yaml_sequence_to_tuple)]
 DefectCodeTuple = Annotated[tuple[str, ...], BeforeValidator(_yaml_sequence_to_tuple)]
-ForecastHorizons = Annotated[
-    tuple[Literal[1, 3, 6], ...], BeforeValidator(_yaml_sequence_to_tuple)
-]
+ForecastHorizons = Annotated[tuple[Literal[1, 3, 6], ...], BeforeValidator(_yaml_sequence_to_tuple)]
 ForecastIntervals = Annotated[
     tuple[Literal[0.80, 0.95], ...], BeforeValidator(_yaml_sequence_to_tuple)
 ]
@@ -64,20 +61,14 @@ class ReportingSettings(StrictModel):
 
     @model_validator(mode="after")
     def validate_dates(self) -> ReportingSettings:
-        expected = (
+        if (self.period_start, self.period_end, self.default_as_of_date) != (
             date(2022, 1, 1),
             date(2026, 9, 30),
-            date(2026, 12, 31),
             date(2026, 9, 30),
-        )
-        actual = (
-            self.period_start,
-            self.period_end,
-            self.extension_end,
-            self.default_as_of_date,
-        )
-        if actual != expected:
+        ):
             raise ValueError("reporting dates must match the approved specification window")
+        if self.extension_end < self.period_end:
+            raise ValueError("extension_end cannot precede period_end")
         return self
 
 
@@ -94,11 +85,11 @@ class ApplicationConfiguration(StrictModel):
 
 
 class PopulationSettings(StrictModel):
-    customers: Literal[4000]
-    products: Literal[750]
-    salespeople: Literal[30]
-    suppliers: Literal[80]
-    subcategories_per_category: Literal[4]
+    customers: int = Field(ge=1)
+    products: int = Field(ge=20)
+    salespeople: int = Field(ge=3)
+    suppliers: int = Field(ge=3)
+    subcategories_per_category: int = Field(ge=1)
     orders_target: Literal[120000]
     orders_tolerance_fraction: Literal[0.05]
     order_lines_min: Literal[250000]
@@ -110,15 +101,96 @@ class PopulationSettings(StrictModel):
 class CatalogueSettings(StrictModel):
     categories: StringTuple
     channels: StringTuple
+    subcategories: dict[str, StringTuple]
+    category_weights: FloatTuple
     alternative_supplier_share: Literal[0.20]
     alternative_supplier_tolerance: Literal[0.03]
 
     @model_validator(mode="after")
     def validate_reference_counts(self) -> CatalogueSettings:
-        if len(self.categories) != 12 or len(set(self.categories)) != 12:
-            raise ValueError("catalogue must contain 12 unique approved categories")
-        if len(self.channels) != 5 or len(set(self.channels)) != 5:
-            raise ValueError("catalogue must contain five unique approved channels")
+        approved_categories = (
+            "Safety Equipment",
+            "Hand Tools",
+            "Power Tool Accessories",
+            "Electrical",
+            "Fasteners",
+            "Maintenance Supplies",
+            "Workwear",
+            "Cleaning & Hygiene",
+            "Storage & Handling",
+            "Workshop Equipment",
+            "Industrial Consumables",
+            "Outdoor & Site Equipment",
+        )
+        approved_channels = (
+            "Account Manager",
+            "Inside Sales",
+            "Web",
+            "Email / Phone Order",
+            "Trade Counter",
+        )
+        if self.categories != approved_categories:
+            raise ValueError("catalogue categories must match the approved ordered taxonomy")
+        if self.channels != approved_channels:
+            raise ValueError("catalogue channels must match the approved ordered taxonomy")
+        if tuple(self.subcategories) != self.categories:
+            raise ValueError("subcategory groups must follow the approved category order")
+        lengths = {len(values) for values in self.subcategories.values()}
+        if len(lengths) != 1 or next(iter(lengths)) < 1:
+            raise ValueError("each category must declare the same positive subcategory count")
+        if len(self.category_weights) != len(self.categories):
+            raise ValueError("category_weights must align with categories")
+        _validate_weights(self.category_weights, "category_weights")
+        return self
+
+
+def _validate_weights(values: tuple[float, ...], name: str) -> None:
+    if any(value < 0 for value in values) or abs(sum(values) - 1.0) > 1e-9:
+        raise ValueError(f"{name} must be nonnegative and sum to 1")
+
+
+class DistributionSettings(StrictModel):
+    country_weights: FloatTuple
+    city_weights: dict[str, float]
+    segment_weights: FloatTuple
+    industry_weights: FloatTuple
+    company_size_weights: FloatTuple
+    account_status_weights: FloatTuple
+    history_change_share: float = Field(ge=0, le=1)
+    assignment_gap_share: float = Field(ge=0, le=1)
+    ownership_transfer_share: float = Field(ge=0, le=1)
+
+    @model_validator(mode="after")
+    def validate_weights(self) -> DistributionSettings:
+        for name in (
+            "country_weights",
+            "segment_weights",
+            "industry_weights",
+            "company_size_weights",
+            "account_status_weights",
+        ):
+            _validate_weights(getattr(self, name), name)
+        expected_lengths = {
+            "country_weights": 3,
+            "segment_weights": 5,
+            "industry_weights": 11,
+            "company_size_weights": 4,
+            "account_status_weights": 3,
+        }
+        for name, length in expected_lengths.items():
+            if len(getattr(self, name)) != length:
+                raise ValueError(f"{name} must contain {length} values")
+        city_groups = {
+            "LT": ("LT-VILNIUS", "LT-KAUNAS", "LT-KLAIPEDA", "LT-SIAULIAI", "LT-PANEVEZYS"),
+            "LV": ("LV-RIGA", "LV-DAUGAVPILS", "LV-LIEPAJA", "LV-JELGAVA", "LV-VENTSPILS"),
+            "EE": ("EE-TALLINN", "EE-TARTU", "EE-NARVA", "EE-PARNU"),
+        }
+        if set(self.city_weights) != {city for cities in city_groups.values() for city in cities}:
+            raise ValueError("city_weights must contain the frozen 14-city catalogue")
+        for country, cities in city_groups.items():
+            _validate_weights(
+                tuple(self.city_weights[city] for city in cities), f"city_weights[{country}]"
+            )
         return self
 
 
@@ -145,11 +217,19 @@ class OutputSettings(StrictModel):
 
 class GenerationConfiguration(StrictModel):
     schema_version: Literal[1]
-    master_seed: Literal[20261010]
+    master_seed: int = Field(ge=0, le=4_294_967_295)
     population: PopulationSettings
     catalogue: CatalogueSettings
+    distributions: DistributionSettings
     component_ids: ComponentIdentifiers
     output: OutputSettings
+
+    @model_validator(mode="after")
+    def validate_catalogue_population(self) -> GenerationConfiguration:
+        counts = {len(values) for values in self.catalogue.subcategories.values()}
+        if counts != {self.population.subcategories_per_category}:
+            raise ValueError("subcategories_per_category must match the declared catalogue")
+        return self
 
 
 class InjectionSettings(StrictModel):

@@ -73,6 +73,7 @@ narwhals==2.27.1
     #   scikit-learn
 numpy==2.5.4
     # via
+    #   baltic-sales-intelligence (pyproject.toml)
     #   formulaic
     #   pandas
     #   patsy
