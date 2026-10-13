@@ -12,7 +12,11 @@ from pathlib import Path
 from baltic_sales_intelligence.config import ConfigurationError, load_configuration
 from baltic_sales_intelligence.generation import generate_reference_data
 from baltic_sales_intelligence.logging import configure_logging, log_event
-from baltic_sales_intelligence.quality import publish_raw_injection
+from baltic_sales_intelligence.quality import (
+    DataQualityError,
+    publish_raw_injection,
+    publish_silver,
+)
 
 
 class ExitCode(IntEnum):
@@ -37,7 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="python -m baltic_sales_intelligence.pipeline",
         description=(
             "Run a versioned Baltic Sales Intelligence pipeline stage. "
-            "Generate canonical truth or inject deterministic defects into raw copies."
+            "Generate truth, inject deterministic defects, or validate raw data into Silver."
         ),
     )
     parser.add_argument(
@@ -63,9 +67,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Replace an existing supported-stage output.",
     )
     parser.add_argument(
+        "--input",
+        type=Path,
+        help="Stage input directory (validate defaults to data/raw).",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
-        help="Stage output directory (defaults to data/truth or data/raw).",
+        help="Stage output directory (defaults depend on the selected stage).",
+    )
+    parser.add_argument(
+        "--quarantine-output",
+        type=Path,
+        help="Validate-stage quarantine directory (defaults to data/quarantine).",
     )
     return parser
 
@@ -73,13 +87,14 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
-    supported = {Stage.GENERATE, Stage.INJECT_DEFECTS}
-    if (args.dry_run or args.force or args.output) and args.stage not in supported:
+    supported = {Stage.GENERATE, Stage.INJECT_DEFECTS, Stage.VALIDATE}
+    if (
+        args.dry_run or args.force or args.input or args.output or args.quarantine_output
+    ) and args.stage not in supported:
         parser = build_parser()
         parser.print_usage()
         print(
-            "error: --dry-run, --force and --output are supported only for "
-            "generate and inject-defects",
+            "error: stage path and publication flags are not supported for this later stage",
             flush=True,
         )
         return ExitCode.NOT_IMPLEMENTED
@@ -190,6 +205,59 @@ def main(argv: Sequence[str] | None = None) -> int:
             batch_id=result.manifest["batch_id"],
             count=len(result.registry),
         )
+        return ExitCode.OK
+    if args.stage == Stage.VALIDATE:
+        project_root = Path(args.config).resolve().parent
+        source = args.input or (project_root / "data" / "raw")
+        output = args.output or (project_root / "data" / "silver")
+        quarantine = args.quarantine_output or (project_root / "data" / "quarantine")
+        try:
+            result = publish_silver(
+                configuration,
+                source,
+                output,
+                quarantine,
+                publish=not args.dry_run,
+                force=args.force,
+            )
+        except (OSError, ValueError, DataQualityError) as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                str(exc),
+                stage=args.stage,
+                action="validation",
+                dataset="raw_batch",
+                batch_id=configuration.deterministic_hash()[:12],
+                error_category="VALIDATION_FAILED",
+            )
+            return ExitCode.STAGE_FAILED
+        run_counts = result.dispositions.loc[result.dispositions["scope"] == "run"].iloc[0]
+        log_event(
+            logger,
+            logging.INFO,
+            "raw batch validated" if args.dry_run else "Silver data published",
+            stage=args.stage,
+            action="dry_run" if args.dry_run else "publish",
+            dataset="silver",
+            batch_id=result.manifest["source_batch_id"],
+            count=int(run_counts["accepted_unchanged"] + run_counts["repaired"]),
+        )
+        for action, column in (
+            ("quarantine", "quarantined"),
+            ("repair", "repaired"),
+            ("discard_exact_duplicate", "discarded_exact_duplicate"),
+        ):
+            log_event(
+                logger,
+                logging.INFO,
+                f"validation disposition count: {action}",
+                stage=args.stage,
+                action=action,
+                dataset="raw_batch",
+                batch_id=result.manifest["source_batch_id"],
+                count=int(run_counts[column]),
+            )
         return ExitCode.OK
     log_event(
         logger,

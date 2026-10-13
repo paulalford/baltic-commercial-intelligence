@@ -4,6 +4,7 @@ from pathlib import Path
 from shutil import copytree
 from types import SimpleNamespace
 
+import pandas as pd
 import pytest
 
 from baltic_sales_intelligence.pipeline.cli import ExitCode, build_parser, main
@@ -28,11 +29,49 @@ def test_generate_dry_run_returns_success_without_writing(tmp_path: Path) -> Non
     assert not output.exists()
 
 
-def test_reserved_flags_return_nonzero() -> None:
-    result = main(
-        ["--config", str(CONFIG_DIRECTORY), "--stage", "validate", "--dry-run"]
-    )
+def test_later_stage_flags_return_nonzero() -> None:
+    result = main(["--config", str(CONFIG_DIRECTORY), "--stage", "warehouse", "--dry-run"])
     assert result == ExitCode.NOT_IMPLEMENTED
+
+
+def test_validate_dry_run_uses_conventional_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "config"
+    copytree(CONFIG_DIRECTORY, config)
+    observed = {}
+
+    def fake_publish(configuration, raw, output, quarantine, *, publish, force):
+        observed.update(
+            raw=raw,
+            output=output,
+            quarantine=quarantine,
+            publish=publish,
+            force=force,
+        )
+        dispositions = pd.DataFrame(
+            [
+                {
+                    "scope": "run",
+                    "accepted_unchanged": 1,
+                    "repaired": 0,
+                    "quarantined": 0,
+                    "discarded_exact_duplicate": 0,
+                }
+            ]
+        )
+        return SimpleNamespace(manifest={"source_batch_id": "fixture"}, dispositions=dispositions)
+
+    monkeypatch.setattr("baltic_sales_intelligence.pipeline.cli.publish_silver", fake_publish)
+    result = main(["--config", str(config), "--stage", "validate", "--dry-run"])
+    assert result == ExitCode.OK
+    assert observed == {
+        "raw": tmp_path / "data" / "raw",
+        "output": tmp_path / "data" / "silver",
+        "quarantine": tmp_path / "data" / "quarantine",
+        "publish": False,
+        "force": False,
+    }
 
 
 def test_inject_defects_dry_run_uses_conventional_paths(
