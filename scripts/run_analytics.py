@@ -1,4 +1,4 @@
-"""Thin wrapper for the future analytics stage."""
+"""Thin wrapper for the Gold analytics stage."""
 
 import sys
 

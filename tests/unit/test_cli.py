@@ -22,17 +22,51 @@ def test_parser_rejects_unknown_stage() -> None:
 
 def test_generate_dry_run_returns_success_without_writing(tmp_path: Path) -> None:
     output = tmp_path / "truth"
-    result = main([
-        "--config", str(CONFIG_DIRECTORY), "--stage", "generate", "--dry-run",
-        "--output", str(output),
-    ])
+    result = main(
+        [
+            "--config",
+            str(CONFIG_DIRECTORY),
+            "--stage",
+            "generate",
+            "--dry-run",
+            "--output",
+            str(output),
+        ]
+    )
     assert result == ExitCode.OK
     assert not output.exists()
 
 
 def test_later_stage_flags_return_nonzero() -> None:
-    result = main(["--config", str(CONFIG_DIRECTORY), "--stage", "analytics", "--dry-run"])
+    result = main(["--config", str(CONFIG_DIRECTORY), "--stage", "insights", "--dry-run"])
     assert result == ExitCode.NOT_IMPLEMENTED
+
+
+def test_analytics_dry_run_uses_conventional_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "config"
+    copytree(CONFIG_DIRECTORY, config)
+    observed = {}
+
+    def fake_build(configuration, source, output, *, publish, force):
+        observed.update(source=source, output=output, publish=publish, force=force)
+        return SimpleNamespace(
+            manifest={
+                "source_batch_id": "fixture",
+                "objects": {"mart_customer_month": {"row_count": 2}},
+            }
+        )
+
+    monkeypatch.setattr("baltic_sales_intelligence.pipeline.cli.build_gold", fake_build)
+    result = main(["--config", str(config), "--stage", "analytics", "--dry-run"])
+    assert result == ExitCode.OK
+    assert observed == {
+        "source": tmp_path / "data" / "database",
+        "output": tmp_path / "data" / "gold",
+        "publish": False,
+        "force": False,
+    }
 
 
 def test_warehouse_dry_run_uses_conventional_paths(

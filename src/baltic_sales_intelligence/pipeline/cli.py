@@ -11,6 +11,7 @@ from pathlib import Path
 
 from baltic_sales_intelligence.config import ConfigurationError, load_configuration
 from baltic_sales_intelligence.generation import generate_reference_data
+from baltic_sales_intelligence.gold import build_gold
 from baltic_sales_intelligence.logging import configure_logging, log_event
 from baltic_sales_intelligence.quality import (
     DataQualityError,
@@ -42,7 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="python -m baltic_sales_intelligence.pipeline",
         description=(
             "Run a versioned Baltic Sales Intelligence pipeline stage. "
-            "Generate truth, inject defects, validate Silver, or build the DuckDB warehouse."
+            "Generate truth, validate Silver, build the warehouse, or publish Gold marts."
         ),
     )
     parser.add_argument(
@@ -70,7 +71,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--input",
         type=Path,
-        help="Stage input directory (validate: data/raw; warehouse: data/silver).",
+        help=(
+            "Stage input directory (validate: data/raw; warehouse: data/silver; "
+            "analytics: data/database)."
+        ),
     )
     parser.add_argument(
         "--output",
@@ -94,7 +98,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("error: --quarantine-output is supported only for validate", flush=True)
         return ExitCode.USAGE_ERROR
 
-    supported = {Stage.GENERATE, Stage.INJECT_DEFECTS, Stage.VALIDATE, Stage.WAREHOUSE}
+    supported = {
+        Stage.GENERATE,
+        Stage.INJECT_DEFECTS,
+        Stage.VALIDATE,
+        Stage.WAREHOUSE,
+        Stage.ANALYTICS,
+    }
     if (
         args.dry_run or args.force or args.input or args.output or args.quarantine_output
     ) and args.stage not in supported:
@@ -304,6 +314,42 @@ def main(argv: Sequence[str] | None = None) -> int:
             dataset="warehouse",
             batch_id=result.manifest["source_batch_id"],
             count=fact_count,
+        )
+        return ExitCode.OK
+    if args.stage == Stage.ANALYTICS:
+        project_root = Path(args.config).resolve().parent
+        source = args.input or (project_root / "data" / "database")
+        output = args.output or (project_root / "data" / "gold")
+        try:
+            result = build_gold(
+                configuration,
+                source,
+                output,
+                publish=not args.dry_run,
+                force=args.force,
+            )
+        except (OSError, ValueError) as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                str(exc),
+                stage=args.stage,
+                action="gold_build",
+                dataset="warehouse",
+                batch_id=configuration.deterministic_hash()[:12],
+                error_category="ANALYTICS_FAILED",
+            )
+            return ExitCode.STAGE_FAILED
+        mart_count = sum(metadata["row_count"] for metadata in result.manifest["objects"].values())
+        log_event(
+            logger,
+            logging.INFO,
+            "Gold marts validated" if args.dry_run else "Gold marts published",
+            stage=args.stage,
+            action="dry_run" if args.dry_run else "publish",
+            dataset="gold",
+            batch_id=result.manifest["source_batch_id"],
+            count=mart_count,
         )
         return ExitCode.OK
     log_event(

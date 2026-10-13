@@ -42,6 +42,7 @@ packages = ["src/baltic_sales_intelligence"]
 [tool.pytest.ini_options]
 addopts = "--strict-config --strict-markers"
 testpaths = ["tests"]
+pythonpath = ["."]
 
 [tool.coverage.run]
 branch = true
