@@ -17,6 +17,7 @@ from baltic_sales_intelligence.quality import (
     publish_raw_injection,
     publish_silver,
 )
+from baltic_sales_intelligence.warehouse import build_warehouse
 
 
 class ExitCode(IntEnum):
@@ -41,7 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="python -m baltic_sales_intelligence.pipeline",
         description=(
             "Run a versioned Baltic Sales Intelligence pipeline stage. "
-            "Generate truth, inject deterministic defects, or validate raw data into Silver."
+            "Generate truth, inject defects, validate Silver, or build the DuckDB warehouse."
         ),
     )
     parser.add_argument(
@@ -69,7 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--input",
         type=Path,
-        help="Stage input directory (validate defaults to data/raw).",
+        help="Stage input directory (validate: data/raw; warehouse: data/silver).",
     )
     parser.add_argument(
         "--output",
@@ -87,7 +88,13 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
-    supported = {Stage.GENERATE, Stage.INJECT_DEFECTS, Stage.VALIDATE}
+    if args.quarantine_output and args.stage != Stage.VALIDATE:
+        parser = build_parser()
+        parser.print_usage()
+        print("error: --quarantine-output is supported only for validate", flush=True)
+        return ExitCode.USAGE_ERROR
+
+    supported = {Stage.GENERATE, Stage.INJECT_DEFECTS, Stage.VALIDATE, Stage.WAREHOUSE}
     if (
         args.dry_run or args.force or args.input or args.output or args.quarantine_output
     ) and args.stage not in supported:
@@ -258,6 +265,46 @@ def main(argv: Sequence[str] | None = None) -> int:
                 batch_id=result.manifest["source_batch_id"],
                 count=int(run_counts[column]),
             )
+        return ExitCode.OK
+    if args.stage == Stage.WAREHOUSE:
+        project_root = Path(args.config).resolve().parent
+        source = args.input or (project_root / "data" / "silver")
+        output = args.output or (project_root / "data" / "database")
+        try:
+            result = build_warehouse(
+                configuration,
+                source,
+                output,
+                publish=not args.dry_run,
+                force=args.force,
+            )
+        except (OSError, ValueError) as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                str(exc),
+                stage=args.stage,
+                action="warehouse_build",
+                dataset="silver",
+                batch_id=configuration.deterministic_hash()[:12],
+                error_category="WAREHOUSE_FAILED",
+            )
+            return ExitCode.STAGE_FAILED
+        fact_count = sum(
+            metadata["row_count"]
+            for name, metadata in result.manifest["objects"].items()
+            if name.startswith("fact_") and metadata["object_type"] == "table"
+        )
+        log_event(
+            logger,
+            logging.INFO,
+            "warehouse validated" if args.dry_run else "warehouse published",
+            stage=args.stage,
+            action="dry_run" if args.dry_run else "publish",
+            dataset="warehouse",
+            batch_id=result.manifest["source_batch_id"],
+            count=fact_count,
+        )
         return ExitCode.OK
     log_event(
         logger,

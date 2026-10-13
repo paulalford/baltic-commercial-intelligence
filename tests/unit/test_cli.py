@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
+from baltic_sales_intelligence.config import load_configuration
 from baltic_sales_intelligence.pipeline.cli import ExitCode, build_parser, main
 
 CONFIG_DIRECTORY = Path(__file__).parents[2] / "config"
@@ -30,8 +31,47 @@ def test_generate_dry_run_returns_success_without_writing(tmp_path: Path) -> Non
 
 
 def test_later_stage_flags_return_nonzero() -> None:
-    result = main(["--config", str(CONFIG_DIRECTORY), "--stage", "warehouse", "--dry-run"])
+    result = main(["--config", str(CONFIG_DIRECTORY), "--stage", "analytics", "--dry-run"])
     assert result == ExitCode.NOT_IMPLEMENTED
+
+
+def test_warehouse_dry_run_uses_conventional_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "config"
+    copytree(CONFIG_DIRECTORY, config)
+    observed = {}
+
+    def fake_build(configuration, source, output, *, publish, force):
+        observed.update(
+            source=source,
+            output=output,
+            publish=publish,
+            force=force,
+            config_hash=configuration.deterministic_hash(),
+        )
+        return SimpleNamespace(
+            manifest={
+                "source_batch_id": "fixture",
+                "objects": {
+                    "fact_order_line": {
+                        "object_type": "table",
+                        "row_count": 2,
+                    }
+                },
+            }
+        )
+
+    monkeypatch.setattr("baltic_sales_intelligence.pipeline.cli.build_warehouse", fake_build)
+    result = main(["--config", str(config), "--stage", "warehouse", "--dry-run"])
+    assert result == ExitCode.OK
+    assert observed == {
+        "source": tmp_path / "data" / "silver",
+        "output": tmp_path / "data" / "database",
+        "publish": False,
+        "force": False,
+        "config_hash": load_configuration(config).deterministic_hash(),
+    }
 
 
 def test_validate_dry_run_uses_conventional_paths(

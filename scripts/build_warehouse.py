@@ -1,4 +1,4 @@
-"""Thin wrapper for the future warehouse stage."""
+"""Thin wrapper for the DuckDB warehouse stage."""
 
 import sys
 
