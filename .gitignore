@@ -70,3 +70,7 @@ Thumbs.db
 # Generated customer analytics
 /data/customer/*
 !/data/customer/.gitkeep
+
+# Generated product intelligence
+/data/product/*
+!/data/product/.gitkeep
