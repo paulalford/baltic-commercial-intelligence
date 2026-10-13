@@ -66,3 +66,7 @@ Thumbs.db
 !data/truth/.gitkeep
 !data/quarantine/.gitkeep
 !data/database/.gitkeep
+
+# Generated customer analytics
+/data/customer/*
+!/data/customer/.gitkeep

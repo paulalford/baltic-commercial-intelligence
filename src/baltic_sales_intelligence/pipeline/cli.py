@@ -10,6 +10,7 @@ from enum import IntEnum, StrEnum
 from pathlib import Path
 
 from baltic_sales_intelligence.config import ConfigurationError, load_configuration
+from baltic_sales_intelligence.customer import build_customer_analytics
 from baltic_sales_intelligence.generation import generate_reference_data
 from baltic_sales_intelligence.gold import build_gold
 from baltic_sales_intelligence.logging import configure_logging, log_event
@@ -35,6 +36,7 @@ class Stage(StrEnum):
     VALIDATE = "validate"
     WAREHOUSE = "warehouse"
     ANALYTICS = "analytics"
+    CUSTOMER = "customer"
     INSIGHTS = "insights"
 
 
@@ -43,7 +45,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="python -m baltic_sales_intelligence.pipeline",
         description=(
             "Run a versioned Baltic Sales Intelligence pipeline stage. "
-            "Generate truth, validate Silver, build the warehouse, or publish Gold marts."
+            "Generate truth, validate Silver, build the warehouse, publish Gold marts, "
+            "or publish customer analytics."
         ),
     )
     parser.add_argument(
@@ -73,7 +76,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help=(
             "Stage input directory (validate: data/raw; warehouse: data/silver; "
-            "analytics: data/database)."
+            "analytics: data/database; customer: project data root containing database/ "
+            "and gold/)."
         ),
     )
     parser.add_argument(
@@ -104,6 +108,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         Stage.VALIDATE,
         Stage.WAREHOUSE,
         Stage.ANALYTICS,
+        Stage.CUSTOMER,
     }
     if (
         args.dry_run or args.force or args.input or args.output or args.quarantine_output
@@ -350,6 +355,43 @@ def main(argv: Sequence[str] | None = None) -> int:
             dataset="gold",
             batch_id=result.manifest["source_batch_id"],
             count=mart_count,
+        )
+        return ExitCode.OK
+    if args.stage == Stage.CUSTOMER:
+        project_root = Path(args.config).resolve().parent
+        source = args.input or (project_root / "data")
+        output = args.output or (project_root / "data" / "customer")
+        try:
+            result = build_customer_analytics(
+                configuration,
+                source / "database",
+                source / "gold",
+                output,
+                publish=not args.dry_run,
+                force=args.force,
+            )
+        except (OSError, ValueError) as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                str(exc),
+                stage=args.stage,
+                action="customer_analytics_build",
+                dataset="warehouse_and_gold",
+                batch_id=configuration.deterministic_hash()[:12],
+                error_category="CUSTOMER_ANALYTICS_FAILED",
+            )
+            return ExitCode.STAGE_FAILED
+        row_count = sum(metadata["row_count"] for metadata in result.manifest["objects"].values())
+        log_event(
+            logger,
+            logging.INFO,
+            "customer analytics validated" if args.dry_run else "customer analytics published",
+            stage=args.stage,
+            action="dry_run" if args.dry_run else "publish",
+            dataset="customer_analytics",
+            batch_id=result.manifest["source_batch_id"],
+            count=row_count,
         )
         return ExitCode.OK
     log_event(

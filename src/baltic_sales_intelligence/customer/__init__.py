@@ -1,1 +1,13 @@
-"""Reserved customer-intelligence package; implementation begins after Milestone 1."""
+"""Governed customer-analytics publication."""
+
+from baltic_sales_intelligence.customer.builder import (
+    CustomerAnalyticsBuildResult,
+    CustomerAnalyticsError,
+    build_customer_analytics,
+)
+
+__all__ = [
+    "CustomerAnalyticsBuildResult",
+    "CustomerAnalyticsError",
+    "build_customer_analytics",
+]
