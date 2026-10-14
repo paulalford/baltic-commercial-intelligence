@@ -20,6 +20,7 @@ from baltic_sales_intelligence.quality import (
     publish_raw_injection,
     publish_silver,
 )
+from baltic_sales_intelligence.statistics import build_statistical_analysis
 from baltic_sales_intelligence.warehouse import build_warehouse
 
 
@@ -39,6 +40,7 @@ class Stage(StrEnum):
     ANALYTICS = "analytics"
     CUSTOMER = "customer"
     PRODUCT = "product"
+    STATISTICS = "statistics"
     INSIGHTS = "insights"
 
 
@@ -48,7 +50,7 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Run a versioned Baltic Sales Intelligence pipeline stage. "
             "Generate truth, validate Silver, build the warehouse, publish Gold marts, "
-            "or publish customer and product analytics."
+            "or publish customer, product and statistical analytics."
         ),
     )
     parser.add_argument(
@@ -78,8 +80,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help=(
             "Stage input directory (validate: data/raw; warehouse: data/silver; "
-            "analytics: data/database; customer/product: project data root containing database/ "
-            "and gold/)."
+            "analytics: data/database; customer/product/statistics: project data root "
+            "containing database/, gold/, customer/ and product/)."
         ),
     )
     parser.add_argument(
@@ -112,6 +114,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         Stage.ANALYTICS,
         Stage.CUSTOMER,
         Stage.PRODUCT,
+        Stage.STATISTICS,
     }
     if (
         args.dry_run or args.force or args.input or args.output or args.quarantine_output
@@ -430,6 +433,45 @@ def main(argv: Sequence[str] | None = None) -> int:
             stage=args.stage,
             action="dry_run" if args.dry_run else "publish",
             dataset="product_intelligence",
+            batch_id=result.manifest["source_batch_id"],
+            count=row_count,
+        )
+        return ExitCode.OK
+    if args.stage == Stage.STATISTICS:
+        project_root = Path(args.config).resolve().parent
+        source = args.input or (project_root / "data")
+        output = args.output or (project_root / "data" / "statistics")
+        try:
+            result = build_statistical_analysis(
+                configuration,
+                source / "database",
+                source / "gold",
+                source / "customer",
+                source / "product",
+                output,
+                publish=not args.dry_run,
+                force=args.force,
+            )
+        except (OSError, ValueError) as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                str(exc),
+                stage=args.stage,
+                action="statistical_analysis_build",
+                dataset="governed_upstream_publications",
+                batch_id=configuration.deterministic_hash()[:12],
+                error_category="STATISTICAL_ANALYSIS_FAILED",
+            )
+            return ExitCode.STAGE_FAILED
+        row_count = sum(x["row_count"] for x in result.manifest["objects"].values())
+        log_event(
+            logger,
+            logging.INFO,
+            "statistical analysis validated" if args.dry_run else "statistical analysis published",
+            stage=args.stage,
+            action="dry_run" if args.dry_run else "publish",
+            dataset="statistical_analysis",
             batch_id=result.manifest["source_batch_id"],
             count=row_count,
         )
