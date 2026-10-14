@@ -40,7 +40,7 @@ bsi-pipeline = "baltic_sales_intelligence.pipeline.cli:entrypoint"
 packages = ["src/baltic_sales_intelligence"]
 
 [tool.pytest.ini_options]
-addopts = "--strict-config --strict-markers"
+addopts = "--strict-config --strict-markers --import-mode=importlib"
 testpaths = ["tests"]
 pythonpath = ["."]
 

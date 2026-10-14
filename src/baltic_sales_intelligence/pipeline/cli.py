@@ -11,6 +11,7 @@ from pathlib import Path
 
 from baltic_sales_intelligence.config import ConfigurationError, load_configuration
 from baltic_sales_intelligence.customer import build_customer_analytics
+from baltic_sales_intelligence.forecasting.builder import build_forecasting_anomalies
 from baltic_sales_intelligence.generation import generate_reference_data
 from baltic_sales_intelligence.gold import build_gold
 from baltic_sales_intelligence.logging import configure_logging, log_event
@@ -41,6 +42,7 @@ class Stage(StrEnum):
     CUSTOMER = "customer"
     PRODUCT = "product"
     STATISTICS = "statistics"
+    FORECASTING = "forecasting"
     INSIGHTS = "insights"
 
 
@@ -50,7 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Run a versioned Baltic Sales Intelligence pipeline stage. "
             "Generate truth, validate Silver, build the warehouse, publish Gold marts, "
-            "or publish customer, product and statistical analytics."
+            "or publish customer, product, statistical and forecasting analytics."
         ),
     )
     parser.add_argument(
@@ -80,7 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help=(
             "Stage input directory (validate: data/raw; warehouse: data/silver; "
-            "analytics: data/database; customer/product/statistics: project data root "
+            "analytics: data/database; customer/product/statistics/forecasting: project data root "
             "containing database/, gold/, customer/ and product/)."
         ),
     )
@@ -115,6 +117,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         Stage.CUSTOMER,
         Stage.PRODUCT,
         Stage.STATISTICS,
+        Stage.FORECASTING,
     }
     if (
         args.dry_run or args.force or args.input or args.output or args.quarantine_output
@@ -472,6 +475,44 @@ def main(argv: Sequence[str] | None = None) -> int:
             stage=args.stage,
             action="dry_run" if args.dry_run else "publish",
             dataset="statistical_analysis",
+            batch_id=result.manifest["source_batch_id"],
+            count=row_count,
+        )
+        return ExitCode.OK
+    if args.stage == Stage.FORECASTING:
+        project_root = Path(args.config).resolve().parent
+        source = args.input or (project_root / "data")
+        output = args.output or (project_root / "data" / "forecasting")
+        try:
+            result = build_forecasting_anomalies(
+                configuration,
+                source / "database",
+                source / "gold",
+                source / "product",
+                output,
+                publish=not args.dry_run,
+                force=args.force,
+            )
+        except (OSError, ValueError) as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                str(exc),
+                stage=args.stage,
+                action="forecasting_anomalies_build",
+                dataset="governed_upstream_publications",
+                batch_id=configuration.deterministic_hash()[:12],
+                error_category="FORECASTING_FAILED",
+            )
+            return ExitCode.STAGE_FAILED
+        row_count = sum(x["row_count"] for x in result.manifest["objects"].values())
+        log_event(
+            logger,
+            logging.INFO,
+            "forecasting validated" if args.dry_run else "forecasting published",
+            stage=args.stage,
+            action="dry_run" if args.dry_run else "publish",
+            dataset="forecasting_anomalies",
             batch_id=result.manifest["source_batch_id"],
             count=row_count,
         )

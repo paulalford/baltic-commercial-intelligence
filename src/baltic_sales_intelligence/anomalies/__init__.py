@@ -1,1 +1,1 @@
-"""Reserved anomaly-detection package; implementation begins after Milestone 1."""
+"""Causal seasonal commercial anomaly assessment."""

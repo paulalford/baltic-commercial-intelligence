@@ -1,1 +1,1 @@
-"""Reserved forecasting package; implementation begins after Milestone 1."""
+"""Governed monthly forecasting and anomaly publication."""
