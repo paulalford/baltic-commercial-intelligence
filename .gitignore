@@ -82,3 +82,7 @@ Thumbs.db
 # Generated forecasting and anomaly analysis
 /data/forecasting/*
 !/data/forecasting/.gitkeep
+
+# Generated opportunity and insight analysis
+/data/insights/*
+!/data/insights/.gitkeep

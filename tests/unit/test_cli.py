@@ -37,9 +37,12 @@ def test_generate_dry_run_returns_success_without_writing(tmp_path: Path) -> Non
     assert not output.exists()
 
 
-def test_later_stage_flags_return_nonzero() -> None:
-    result = main(["--config", str(CONFIG_DIRECTORY), "--stage", "insights", "--dry-run"])
-    assert result == ExitCode.NOT_IMPLEMENTED
+def test_insights_missing_sources_fail_closed(tmp_path: Path) -> None:
+    config = tmp_path / "config"
+    copytree(CONFIG_DIRECTORY, config)
+    result = main(["--config", str(config), "--stage", "insights", "--dry-run"])
+    assert result == ExitCode.STAGE_FAILED
+    assert not (tmp_path / "data" / "insights").exists()
 
 
 def test_analytics_dry_run_uses_conventional_paths(

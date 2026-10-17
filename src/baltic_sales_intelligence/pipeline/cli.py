@@ -15,6 +15,8 @@ from baltic_sales_intelligence.forecasting.builder import build_forecasting_anom
 from baltic_sales_intelligence.generation import generate_reference_data
 from baltic_sales_intelligence.gold import build_gold
 from baltic_sales_intelligence.logging import configure_logging, log_event
+from baltic_sales_intelligence.opportunities.builder import build_opportunity_insights
+from baltic_sales_intelligence.opportunities.policy import load_policy
 from baltic_sales_intelligence.product import build_product_intelligence
 from baltic_sales_intelligence.quality import (
     DataQualityError,
@@ -52,7 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "Run a versioned Baltic Sales Intelligence pipeline stage. "
             "Generate truth, validate Silver, build the warehouse, publish Gold marts, "
-            "or publish customer, product, statistical and forecasting analytics."
+            "or publish customer, product, statistical, forecasting and insight analytics."
         ),
     )
     parser.add_argument(
@@ -82,8 +84,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help=(
             "Stage input directory (validate: data/raw; warehouse: data/silver; "
-            "analytics: data/database; customer/product/statistics/forecasting: project data root "
-            "containing database/, gold/, customer/ and product/)."
+            "analytics: data/database; analytical stages: project data root "
+            "containing database/, gold/, customer/, product/, statistics/ and forecasting/)."
         ),
     )
     parser.add_argument(
@@ -118,6 +120,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         Stage.PRODUCT,
         Stage.STATISTICS,
         Stage.FORECASTING,
+        Stage.INSIGHTS,
     }
     if (
         args.dry_run or args.force or args.input or args.output or args.quarantine_output
@@ -513,6 +516,44 @@ def main(argv: Sequence[str] | None = None) -> int:
             stage=args.stage,
             action="dry_run" if args.dry_run else "publish",
             dataset="forecasting_anomalies",
+            batch_id=result.manifest["source_batch_id"],
+            count=row_count,
+        )
+        return ExitCode.OK
+    if args.stage == Stage.INSIGHTS:
+        project_root = Path(args.config).resolve().parent
+        source = args.input or (project_root / "data")
+        output = args.output or (project_root / "data" / "insights")
+        try:
+            policy = load_policy(args.config)
+            result = build_opportunity_insights(
+                configuration,
+                policy,
+                source,
+                output,
+                publish=not args.dry_run,
+                force=args.force,
+            )
+        except (OSError, ValueError) as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                str(exc),
+                stage=args.stage,
+                action="opportunity_insights_build",
+                dataset="governed_upstream_publications",
+                batch_id=configuration.deterministic_hash()[:12],
+                error_category="INSIGHTS_FAILED",
+            )
+            return ExitCode.STAGE_FAILED
+        row_count = sum(x["row_count"] for x in result.manifest["objects"].values())
+        log_event(
+            logger,
+            logging.INFO,
+            "opportunity insights validated" if args.dry_run else "opportunity insights published",
+            stage=args.stage,
+            action="dry_run" if args.dry_run else "publish",
+            dataset="opportunity_insights",
             batch_id=result.manifest["source_batch_id"],
             count=row_count,
         )

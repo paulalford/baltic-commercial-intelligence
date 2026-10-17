@@ -1,1 +1,1 @@
-"""Reserved opportunity package; implementation begins after Milestone 1."""
+"""Governed opportunity and insight publication."""
